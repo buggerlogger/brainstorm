@@ -26,14 +26,21 @@ import { parseBlocks, writeBlocks, groupBlocks } from '../core/blocksmd.mjs';
 import { readTranscript, summarise } from '../core/transcript.mjs';
 import { traceFlow, probe, diffFlow } from '../core/flow.mjs';
 import { loadPins, savePins, newPin, applyPins, purgePin, rewindTo, ANCHORS } from '../core/pins.mjs';
+import { Shell, SHELLS, DEFAULT_SHELL } from './shell.mjs';
+import { SessionWatcher } from '../core/watch.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = pathResolve(HERE, '..', '..');
 const ENGINE = join(ROOT, 'src', 'ctx.mjs');
 const UI_DIR = join(ROOT, 'ui');
 
-// Engine verbs the terminal may run. Anything else is refused by name.
+// Engine verbs, still usable from the terminal as a shorthand that runs the
+// bundled engine rather than whatever `ctx` happens to be on PATH.
 const VERBS = new Set(['list', 'extract', 'status', 'build', 'verify', 'help', '--help']);
+
+// The shell and the session watcher live for the life of the server.
+let shell = null;
+let watcher = null;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -113,6 +120,8 @@ function loadWorkspace(dir) {
   const landed = ws.pinReport.filter((r) => r.applied).length;
   if (ws.pins.length) logLine(`pins: ${landed}/${ws.pins.length} applied for ${config.cwd}`);
   ws.baseline = traceOf(config.source, config.tokens?.charsPerToken || 4);
+  // Point the live watcher and the shell at this project.
+  ensureWatcher(config.cwd, config.tokens?.charsPerToken || 4);
   return ws;
 }
 
@@ -204,6 +213,27 @@ function titleOf(b) {
   }
   const t = b.text.replace(/\s+/g, ' ').trim();
   return t.length > 72 ? `${t.slice(0, 69)}...` : t || '(empty)';
+}
+
+function ensureWatcher(cwd, ratio) {
+  if (!watcher) {
+    watcher = new SessionWatcher({ cwd, ratio, onEvent: (ev) => {
+      if (ev.type === 'jump') logLine(`live jump  call ${ev.call}  ~${ev.tokens} tok  (${ev.session.slice(0, 8)})`);
+      else if (ev.type === 'call') logLine(`live call  ${ev.label}`);
+      else if (ev.type === 'session-started') logLine(`live session ${ev.session.slice(0, 8)} started`);
+    } });
+    watcher.start();
+    logLine(`watching ${watcher.dir}`);
+  } else {
+    watcher.ratio = ratio;
+    watcher.setCwd(cwd);
+  }
+  return watcher;
+}
+
+function ensureShell(cwd) {
+  if (!shell) shell = new Shell({ cwd: cwd || ws.config?.cwd || process.cwd() });
+  return shell;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,22 +377,77 @@ const routes = {
     return { needle: body.needle, hits };
   },
 
+  // The engine, run synchronously, for the UI's own buttons. The interactive
+  // terminal is /api/shell/* below.
   'POST /api/terminal': (body) => {
     const argv = String(body.cmd || '').trim().split(/\s+/).filter(Boolean);
     if (!argv.length) return { code: 0, out: '' };
     const verb = argv[0] === 'ctx' ? argv[1] : argv[0];
     const args = argv[0] === 'ctx' ? argv.slice(1) : argv;
     if (!VERBS.has(verb)) {
-      return {
-        code: 2,
-        out: `brainstorm: "${verb}" is not an engine verb.\nallowed: ${[...VERBS].join(' ')}\nthis terminal runs the engine, not a shell.`,
-      };
+      return { code: 2, out: `brainstorm: "${verb}" is not an engine verb (allowed: ${[...VERBS].join(' ')}). Use the shell for anything else.` };
     }
-    // Default --dir to the open workspace so the terminal and the UI agree.
-    if (ws.dir && !args.includes('--dir') && ['extract', 'status', 'build', 'ui'].includes(verb)) {
+    if (ws.dir && !args.includes('--dir') && ['extract', 'status', 'build'].includes(verb)) {
       args.push('--dir', ws.dir);
     }
     return engine(args);
+  },
+
+  // --- the shell ------------------------------------------------------------
+
+  'GET /api/shell': (body, url) => {
+    const sh = ensureShell();
+    const since = Number(url.searchParams.get('since') || 0);
+    return { ...sh.status(), lines: sh.since(since) };
+  },
+
+  'POST /api/shell': (body) => {
+    const sh = ensureShell(body.cwd);
+    const action = body.action || 'write';
+    if (action === 'write') {
+      const data = String(body.data ?? '');
+      // An engine verb typed into the shell runs the BUNDLED engine, so the
+      // terminal and the UI cannot drift onto two different implementations.
+      const argv = data.trim().split(/\s+/).filter(Boolean);
+      const verb = argv[0] === 'ctx' ? argv[1] : argv[0];
+      if (argv.length && VERBS.has(verb) && argv[0] !== 'node') {
+        const args = argv[0] === 'ctx' ? argv.slice(1) : argv;
+        if (ws.dir && !args.includes('--dir') && ['extract', 'status', 'build'].includes(verb)) args.push('--dir', ws.dir);
+        sh.push('in', data.trim());
+        const r = engine(args);
+        sh.push(r.code === 0 ? 'out' : 'err', r.out.replace(/\s+$/, ''));
+        return { ...sh.status(), ran: 'engine' };
+      }
+      sh.write(data);
+      return { ...sh.status(), ran: 'shell' };
+    }
+    if (action === 'interrupt') { sh.interrupt(); return sh.status(); }
+    if (action === 'restart') { sh.restart(body.kind, body.cwd); return sh.status(); }
+    throw new Error('shell action must be write | interrupt | restart');
+  },
+
+  // --- live session debugging ----------------------------------------------
+
+  'GET /api/live': (body, url) => {
+    if (!watcher) return { watching: false, events: [], seq: 0 };
+    const since = Number(url.searchParams.get('since') || 0);
+    return { ...watcher.status(), events: watcher.since(since) };
+  },
+
+  'POST /api/live': (body) => {
+    const w = ensureWatcher(body.cwd || ws.config?.cwd, ws.config?.tokens?.charsPerToken || 4);
+    if (body.action === 'stop') { w.stop(); return w.status(); }
+    if (body.action === 'start') { w.start(); return w.status(); }
+    if (body.action === 'attach' && body.session) {
+      // Open the session the watcher saw, so its blocks are editable at once.
+      const { path } = resolveSession(body.session);
+      const out = workDirFor(path);
+      const r = engine(['extract', '--session', path, '--dir', out]);
+      if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
+      loadWorkspace(out);
+      return { ...w.status(), state: stateView() };
+    }
+    throw new Error('live action must be start | stop | attach');
   },
 
   // --- sticky context -------------------------------------------------------

@@ -24,9 +24,24 @@ reasoning about them.
 
 ## What it does
 
-**Explorer.** The open session's blocks, grouped into folders by role and kind
-(User messages, Assistant messages, Tool calls, Tool results, Thinking), over
-every project and session on the machine.
+**Explorer.** The open session's blocks in folders, over every project and
+session on the machine. A `user` record is not always a person talking, so
+content classes get folders of their own — measured on one 15,045-line session,
+the user role carried 7 task notifications, 22 local-command results, 11 slash
+commands and 28 pastes, which filed together bury the turns you actually wrote:
+
+```
+User messages        166   284.3K ch
+Assistant messages   995   453.8K ch
+Task notifications     6     7.9K ch
+Slash commands        33     5.1K ch
+Tool calls          1571  2236.6K ch
+Tool results        1570  1678.9K ch
+Thinking             978
+```
+
+Matching is anchored to the start of the text, never a loose `includes`: a
+paste quoted inside a reply must not reclassify the reply.
 
 **Editor.** Click a block, edit it, `Ctrl+S`. Drop a block from the context
 entirely with the eye icon. The status bar carries the running cost: kept
@@ -43,9 +58,33 @@ a frame for a breakpoint, `F10` to step, `F5` to run to the next one.
 in flow order. `Enter` jumps to the next one until the flow is finished. This
 answers the question the tool exists for: *where does this actually load?*
 
-**Terminal.** Runs the engine's verbs (`status`, `build --install`, `verify`,
-`extract`). It is not a shell — a browser tab that can run arbitrary commands
-is a browser tab that can run arbitrary commands.
+**Terminal.** A real shell — PowerShell or cmd on Windows, bash elsewhere —
+running whatever you type. Engine verbs (`status`, `build`, `verify`) are
+intercepted and run the *bundled* engine, so the terminal and the UI can never
+drift onto two implementations.
+
+It is pipes, not a pseudo-terminal. Stated plainly because it matters: a
+full-screen TUI (vim, top, interactive `claude`) will not render, since it
+wants cursor control a pipe cannot carry. `claude -p "..."` works perfectly.
+A real PTY needs a native module and a C++ toolchain; rather than ship a
+terminal that looks real and then garbles, the limit is in the status bar.
+
+**Live.** Start a Claude session anywhere — this terminal, your own Windows
+Terminal, an editor extension — and its context is debugged as it runs:
+
+| event | means |
+|---|---|
+| `session` | a new transcript appeared |
+| `jump` | an API call went to the model, with frames, system/tools/conversation split and token estimate |
+| `call` | a tool invocation entered the transcript |
+
+Detection watches the project's transcript *directory*, not a process, so it
+needs no wrapper, no flag and no cooperation from the CLI, and it survives the
+shell being restarted. Click any event to attach the IDE to that session and
+jump to the exact frame.
+
+**Resizable panes.** Drag the splitter beside the sidebar or above the panel;
+double-click either to restore the default. Sizes persist per browser.
 
 **Build.** Writes `BLOCKS.md`, runs the engine, and reports what changed: blocks
 edited, mirrors synced, tool mirrors synced, renames applied, residue left, and
@@ -106,7 +145,12 @@ No dependencies. Node 18+.
 node test/run.mjs              syntax + flow model      (fast)
 node test/run.mjs --all        also the HTTP API and a real end-to-end swap
 node test/sweep.mjs            the flow model over every transcript on the box
+node test/shell.test.mjs       the terminal, and live detection of a real session
 ```
+
+`test/shell.test.mjs` runs `claude -p` **through the IDE's own shell** and
+asserts the watcher reported a jump with a real context size — the claim that
+would otherwise be easiest to fake.
 
 `test/skillswap.test.mjs` is the end-to-end proof: it writes two skills with
 different secrets, runs a real session that loads one, swaps it for the other
@@ -124,9 +168,13 @@ src/core/transcript.mjs reading records, chain messages
 src/core/flow.mjs       the flow reconstruction and the probe
 src/core/blocksmd.mjs   BLOCKS.md parse/serialise, folder grouping
 src/core/sessions.mjs   finding sessions; refuses ambiguous ids
+src/core/pins.mjs       sticky context that survives a rewind
+src/core/watch.mjs      session detection; jumps and calls, live
 src/server/ide.mjs      the HTTP API (loopback only)
+src/server/shell.mjs    the real shell behind the terminal
 ui/                     the editor: index.html, app.js, styles.css
-test/                   run.mjs, flow.test.mjs, api.test.mjs, skillswap.test.mjs, sweep.mjs
+test/                   run.mjs, flow.test.mjs, ui.test.mjs, api.test.mjs,
+                        shell.test.mjs, skillswap.test.mjs, sweep.mjs
 ```
 
 The server never writes a `.jsonl`. It writes `BLOCKS.md` and shells out to the

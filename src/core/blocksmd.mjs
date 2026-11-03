@@ -69,26 +69,76 @@ export function writeBlocks(file, header, blocks) {
   writeFileSync(file, `${out.join('\n')}`);
 }
 
+// Content classes that deserve a folder of their own. A `user` record is not
+// always a person talking: on one 15,045-line session the user role carried 7
+// task notifications, 22 local-command results, 11 slash commands and 28
+// pastes. Filed together they bury the turns you actually wrote.
+//
+// Matching is on the WHOLE text, anchored, not a loose `includes`. A paste
+// quoted inside a reply must not reclassify the reply -- which is why each
+// test checks the text starts with its marker.
+const CONTENT_CLASSES = [
+  {
+    folder: 'Task notifications',
+    test: (t) => t.startsWith('<task-notification>') || /^\[SYSTEM NOTIFICATION[^\]]*\]/.test(t),
+  },
+  {
+    folder: 'Slash commands',
+    test: (t) => t.startsWith('<command-name>') || t.startsWith('<local-command-'),
+  },
+  {
+    folder: 'Pasted content',
+    // A message that is nothing but a paste. One with your own words around it
+    // is still your message and belongs with your turns.
+    test: (t) => t.startsWith('<pasted_content') && t.endsWith('</pasted_content>'),
+  },
+  {
+    folder: 'System reminders',
+    test: (t) => t.startsWith('<system-reminder>') && t.endsWith('</system-reminder>'),
+  },
+];
+
+export function classifyBlock(b) {
+  const t = (b.text || '').trim();
+  if (b.kind === 'text' || b.kind === undefined) {
+    for (const c of CONTENT_CLASSES) {
+      try {
+        if (c.test(t)) return c.folder;
+      } catch { /* a class must never take the tree down */ }
+    }
+  }
+  if (b.kind === 'tool_use') return 'Tool calls';
+  if (b.kind === 'tool_result') return 'Tool results';
+  if (b.kind === 'thinking') return 'Thinking';
+  if (b.role === 'user') return 'User messages';
+  if (b.role === 'assistant') return 'Assistant messages';
+  if (b.role === 'system') return 'System injections';
+  return 'Other';
+}
+
 // Folders for the tree. A flat list of 2,057 blocks is unusable; these are the
-// groupings a person actually navigates by. `kind` and `role` come from the
-// engine, so no new classification is invented here.
+// groupings a person actually navigates by.
+const ORDER = [
+  'User messages',
+  'Assistant messages',
+  'Task notifications',
+  'Slash commands',
+  'Pasted content',
+  'System reminders',
+  'System injections',
+  'Tool calls',
+  'Tool results',
+  'Thinking',
+  'Other',
+];
+
 export function groupBlocks(blocks) {
   const groups = new Map();
-  const put = (folder, b) => {
+  for (const b of blocks) {
+    const folder = classifyBlock(b);
     if (!groups.has(folder)) groups.set(folder, []);
     groups.get(folder).push(b);
-  };
-  for (const b of blocks) {
-    if (b.kind === 'tool_use') put('Tool calls', b);
-    else if (b.kind === 'tool_result') put('Tool results', b);
-    else if (b.kind === 'thinking') put('Thinking', b);
-    else if (b.role === 'user') put('User messages', b);
-    else if (b.role === 'assistant') put('Assistant messages', b);
-    else if (b.role === 'system') put('System injections', b);
-    else put('Other', b);
   }
-  // Stable, meaningful order rather than insertion order.
-  const ORDER = ['User messages', 'Assistant messages', 'System injections', 'Tool calls', 'Tool results', 'Thinking', 'Other'];
   return ORDER.filter((k) => groups.has(k)).map((name) => ({
     name,
     blocks: groups.get(name),

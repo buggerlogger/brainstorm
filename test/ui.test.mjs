@@ -38,7 +38,14 @@ console.log(`\n  ${htmlIds.length} ids in markup, ${jsIds.length} referenced by 
 const missing = jsIds.filter((id) => !htmlIds.includes(id));
 check(missing.length === 0, 'every id the script reaches for exists in the markup', missing.length ? missing.join(', ') : '');
 
-const unread = htmlIds.filter((id) => !jsIds.includes(id) && !js.includes(`'${id}'`) && !js.includes(`"${id}"`));
+// An id counts as referenced however it is spelled: $('#id'), a bare '#id'
+// passed to a helper, or the plain name in a data attribute lookup. Checking
+// only the $('#id') form reported the splitters as dead when they are wired
+// through wireSplitter('#split-side', ...).
+const referenced = (id) => jsIds.includes(id)
+  || js.includes(`'#${id}'`) || js.includes(`"#${id}"`)
+  || js.includes(`'${id}'`) || js.includes(`"${id}"`);
+const unread = htmlIds.filter((id) => !referenced(id));
 check(unread.length === 0, 'no id in the markup is dead', unread.length ? unread.join(', ') : '');
 
 // --- views and panels ------------------------------------------------------

@@ -29,6 +29,10 @@ const S = {
   panel: 'terminal',
   view: 'explorer',
   editingPin: null,   // pin id being edited, or 'new'
+  shellSeq: 0,
+  liveSeq: 0,
+  liveEvents: [],
+  liveUnread: 0,
 };
 
 /* ------------------------------------------------------------------ api --- */
@@ -722,21 +726,194 @@ function addMsg(who, body) {
 }
 
 /* -------------------------------------------------------------- terminal --- */
+/* A real shell over pipes. Output is polled rather than pushed: a poll that
+   returns nothing costs one small request, and it reconnects by itself after
+   the server restarts, which a dropped socket does not. */
 
 const history = [];
 let histAt = -1;
 
+const CLASS_FOR = { in: 'in', out: 'out', err: 'err', sys: 'sys' };
+
+function shellRender(lines) {
+  const t = $('#term');
+  const atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 40;
+  for (const l of lines) {
+    const prefix = l.stream === 'in' ? '> ' : '';
+    t.appendChild(el('span', CLASS_FOR[l.stream] || '', prefix + l.text + '\n'));
+  }
+  while (t.childNodes.length > 4000) t.removeChild(t.firstChild);
+  if (atBottom) t.scrollTop = t.scrollHeight;
+}
+
+function shellStatus(st) {
+  if (!st || !st.shells) return;
+  $('#shell-state').textContent = st.running ? (st.kind + ' · pid ' + st.pid) : 'not running';
+  $('#shell-state').style.color = st.running ? '' : 'var(--red)';
+  $('#shell-cwd').textContent = st.cwd || '';
+  $('#shell-cwd').title = st.note || '';
+  $('#term-prompt').textContent = st.kind === 'cmd' ? 'C:\\>' : st.kind === 'powershell' ? 'PS >' : '$';
+  const sel = $('#shell-kind');
+  if (sel.options.length !== st.shells.length) {
+    sel.replaceChildren(...st.shells.map((k) => {
+      const o = document.createElement('option');
+      o.value = k;
+      o.textContent = k;
+      return o;
+    }));
+  }
+  sel.value = st.kind;
+}
+
+async function pollShell() {
+  try {
+    const r = await api('/api/shell?since=' + S.shellSeq);
+    if (r.lines && r.lines.length) {
+      S.shellSeq = r.lines[r.lines.length - 1].seq;
+      shellRender(r.lines);
+    }
+    shellStatus(r);
+  } catch (err) { /* server restarting: the next tick retries */ }
+}
+
 async function runCmd(cmd) {
-  termWrite(`$ ${cmd}`, 'cmd');
   history.push(cmd);
   histAt = history.length;
   try {
-    const r = await api('/api/terminal', { cmd });
-    if (r.out) termWrite(r.out, r.code === 0 ? '' : 'err');
-    if (r.code !== 0) status(`exit ${r.code}`, 'err');
-    S.state = await api('/api/state');
-    renderAll();
+    const r = await api('/api/shell', { action: 'write', data: cmd });
+    shellStatus(r);
+    await pollShell();
+    // An engine verb may have changed the workspace underneath us.
+    if (r.ran === 'engine') { S.state = await api('/api/state'); renderAll(); }
   } catch (err) { termWrite(err.message, 'err'); }
+}
+
+/* ------------------------------------------------------------------ live --- */
+/* Jumps and calls as they happen. The watcher polls the project's transcript
+   directory, so a session started in ANY terminal is seen -- this one, your own
+   Windows Terminal, or an editor extension. It needs no cooperation from the
+   CLI: no wrapper, no flag, no environment variable. */
+
+function liveRender(events) {
+  const box = $('#livelog');
+  const follow = $('#live-follow').checked;
+  for (const e of events) {
+    const n = el('div', 'ev ' + e.type);
+    n.appendChild(el('span', 't', (e.at || '').slice(11, 19)));
+    n.appendChild(el('span', 'tag', e.type === 'session-started' ? 'session' : e.type));
+    let msg = '';
+    let num = '';
+    if (e.type === 'jump') {
+      msg = 'call ' + e.call + ' -> model' + (e.model ? ' (' + e.model + ')' : '')
+        + ' · ' + e.frames + ' frames · system ' + fmt(e.system)
+        + ' tools ' + fmt(e.tools) + ' convo ' + fmt(e.conversation);
+      num = '~' + fmt(e.tokens) + ' tok';
+    } else if (e.type === 'call') {
+      msg = e.label + (e.detail ? ' — ' + e.detail : '');
+      num = fmt(e.chars) + ' ch';
+    } else if (e.type === 'session-started') {
+      msg = e.session + ' started';
+    } else if (e.type === 'grew') {
+      msg = e.session + ' grew (' + e.mode + ')';
+      num = fmt(e.bytes) + ' B';
+    } else {
+      msg = e.message || e.type;
+    }
+    n.appendChild(el('span', 'msg', msg));
+    if (num) n.appendChild(el('span', 'num', num));
+    n.addEventListener('click', () => attachLive(e));
+    box.appendChild(n);
+  }
+  while (box.childNodes.length > 800) box.removeChild(box.firstChild);
+  if (follow) box.scrollTop = box.scrollHeight;
+}
+
+async function attachLive(e) {
+  if (!e.session) return;
+  try {
+    status('attaching to ' + e.session.slice(0, 8) + '…');
+    const r = await api('/api/live', { action: 'attach', session: e.session });
+    if (r.state) { S.state = r.state; renderAll(); }
+    await trace('source', { quiet: true });
+    if (typeof e.call === 'number') jumpTo(e.call, typeof e.frame === 'number' ? e.frame : 0);
+    status('attached to ' + e.session.slice(0, 8));
+  } catch (err) { status(err.message, 'err'); }
+}
+
+async function pollLive() {
+  try {
+    const r = await api('/api/live?since=' + S.liveSeq);
+    $('#live-state').textContent = r.watching
+      ? ('watching ' + (r.dir || '')).trim()
+      : 'not watching — open a session first';
+    if (r.events && r.events.length) {
+      S.liveSeq = r.events[r.events.length - 1].seq;
+      S.liveEvents = S.liveEvents.concat(r.events).slice(-800);
+      liveRender(r.events);
+      if (S.panel !== 'live') {
+        S.liveUnread += r.events.filter((e) => e.type === 'jump' || e.type === 'call').length;
+        if (S.liveUnread) {
+          $('#badge-live').hidden = false;
+          $('#badge-live').textContent = String(S.liveUnread);
+        }
+      }
+      for (const e of r.events) {
+        if (e.type === 'jump') termWrite('[live] jump  call ' + e.call + '  ~' + fmt(e.tokens) + ' tok', 'dim');
+        if (e.type === 'session-started') termWrite('[live] session ' + e.session.slice(0, 8) + ' started', 'dim');
+      }
+    }
+  } catch (err) { /* retry next tick */ }
+}
+
+/* ------------------------------------------------------------- splitters --- */
+/* Drag to resize. The sizes are CSS custom properties on <body>, so the grid
+   stays the single source of truth and nothing is laid out by hand.
+   localStorage is wrapped: it throws in a private window and must not take the
+   layout down with it. */
+
+const LIMITS = { side: [160, 760], panel: [28, 900] };
+
+function setSize(which, px) {
+  const [lo, hi] = LIMITS[which];
+  const v = Math.max(lo, Math.min(hi, Math.round(px)));
+  document.body.style.setProperty(which === 'side' ? '--side-w' : '--panel-h', v + 'px');
+  try { localStorage.setItem('brainstorm.' + which, String(v)); } catch (err) { /* private window */ }
+  return v;
+}
+
+function restoreSizes() {
+  for (const which of ['side', 'panel']) {
+    let v = null;
+    try { v = localStorage.getItem('brainstorm.' + which); } catch (err) { v = null; }
+    if (v) setSize(which, Number(v));
+  }
+}
+
+function wireSplitter(id, which, axis) {
+  const h = $(id);
+  if (!h) return;
+  h.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    h.setPointerCapture(e.pointerId);
+    h.classList.add('dragging');
+    document.body.classList.add('resizing');
+    const move = (ev) => {
+      // 48 = activity bar, 22 = status bar. Measured from the layout, not guessed.
+      if (axis === 'x') setSize(which, ev.clientX - 48);
+      else setSize(which, window.innerHeight - ev.clientY - 22);
+    };
+    const up = () => {
+      h.classList.remove('dragging');
+      document.body.classList.remove('resizing');
+      h.removeEventListener('pointermove', move);
+      h.removeEventListener('pointerup', up);
+      renderGutter();
+    };
+    h.addEventListener('pointermove', move);
+    h.addEventListener('pointerup', up);
+  });
+  // Double-click restores the default rather than leaving a pane unusable.
+  h.addEventListener('dblclick', () => setSize(which, which === 'side' ? 290 : 240));
 }
 
 /* ------------------------------------------------------------------- ui ---- */
@@ -751,6 +928,7 @@ function selectView(v) {
 
 function selectPanel(p) {
   S.panel = p;
+  if (p === 'live') { S.liveUnread = 0; $('#badge-live').hidden = true; }
   for (const b of document.querySelectorAll('.ptab')) b.classList.toggle('selected', b.dataset.panel === p);
   for (const s of document.querySelectorAll('.panel-body')) s.hidden = s.dataset.panel !== p;
 }
@@ -758,6 +936,20 @@ function selectPanel(p) {
 document.querySelectorAll('.act').forEach((b) => b.addEventListener('click', () => selectView(b.dataset.view)));
 document.querySelectorAll('.ptab').forEach((b) => b.addEventListener('click', () => selectPanel(b.dataset.panel)));
 
+$('#shell-interrupt').addEventListener('click', async () => {
+  try { shellStatus(await api('/api/shell', { action: 'interrupt' })); } catch (err) { status(err.message, 'err'); }
+});
+const restartShell = async (kind) => {
+  try {
+    const r = await api('/api/shell', { action: 'restart', kind });
+    $('#term').replaceChildren();
+    S.shellSeq = 0;
+    shellStatus(r);
+  } catch (err) { status(err.message, 'err'); }
+};
+$('#shell-restart').addEventListener('click', () => restartShell($('#shell-kind').value));
+$('#shell-kind').addEventListener('change', (e) => restartShell(e.target.value));
+$('#live-clear').addEventListener('click', () => { $('#livelog').replaceChildren(); S.liveEvents = []; });
 $('#pin-add').addEventListener('click', () => editPin('new'));
 $('#pin-save').addEventListener('click', savePin);
 $('#pin-cancel').addEventListener('click', () => { S.editingPin = null; $('#pin-edit').hidden = true; renderPins(); });
@@ -825,8 +1017,12 @@ document.addEventListener('keydown', (e) => {
 /* ------------------------------------------------------------------ boot --- */
 
 (async function boot() {
-  termWrite('brainstorm IDE — the terminal runs the engine, not a shell.', 'dim');
-  termWrite('try: status · build --install · verify --file built.jsonl · help', 'dim');
+  restoreSizes();
+  wireSplitter('#split-side', 'side', 'x');
+  wireSplitter('#split-panel', 'panel', 'y');
+  termWrite('brainstorm — a real shell. Engine verbs (status, build, verify) run the bundled engine.', 'sys');
+  termWrite('Start a Claude session here or in your own terminal; its jumps and calls appear in Live.', 'sys');
+  termWrite('Pipes, not a PTY: full-screen TUIs will not render. claude -p "..." works.', 'dim');
   selectPanel('terminal');
   selectView('explorer');
   try {
@@ -839,4 +1035,8 @@ document.addEventListener('keydown', (e) => {
   } catch { /* nothing open yet */ }
   renderAll();
   await loadProjects();
+  await pollShell();
+  await pollLive();
+  setInterval(pollShell, 600);
+  setInterval(pollLive, 1200);
 })();

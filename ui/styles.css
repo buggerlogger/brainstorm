@@ -58,7 +58,7 @@ html, body {
 
 body {
   display: grid;
-  grid-template-rows: 35px minmax(0, 1fr) var(--panel-h, 240px) 22px;
+  grid-template-rows: 35px minmax(0, 1fr) 5px var(--panel-h, 240px) 22px;
 }
 
 .grow { flex: 1; }
@@ -114,7 +114,7 @@ body {
 .check { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-dim); }
 
 /* ---------- shell ---------- */
-.shell { display: grid; grid-template-columns: 48px var(--side-w, 290px) minmax(0, 1fr); min-height: 0; }
+.shell { display: grid; grid-template-columns: 48px var(--side-w, 290px) 5px minmax(0, 1fr); min-height: 0; }
 
 .activity {
   background: var(--bg-activity);
@@ -213,6 +213,21 @@ body {
 .editor.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 .gutter.wrap { display: none; }
 
+/* ---------- splitters ---------- */
+/* A drag handle has to be bigger than it looks or it is unhittable; the strip
+   is 5px and the ::after bleeds the hit area out to 11px. */
+.splitter { position: relative; background: var(--border); }
+.splitter.v { cursor: col-resize; }
+.splitter.h { cursor: row-resize; }
+.splitter::after {
+  content: ""; position: absolute; inset: -3px;
+}
+.splitter.v::after { inset: 0 -3px; }
+.splitter.h::after { inset: -3px 0; }
+.splitter:hover, .splitter.dragging { background: var(--focus); }
+body.resizing { cursor: inherit; -webkit-user-select: none; user-select: none; }
+body.resizing iframe, body.resizing .editor { pointer-events: none; }
+
 /* ---------- panel ---------- */
 .panel {
   background: var(--bg); border-top: 1px solid var(--border);
@@ -238,6 +253,30 @@ body {
 .term .err { color: var(--red); }
 .term .cmd { color: var(--yellow); }
 .term .dim { color: var(--fg-dim); }
+.term-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px; border-bottom: 1px solid var(--border); font-size: 11px;
+}
+.input.sm { padding: 1px 4px; font-size: 11px; }
+.term .in { color: var(--yellow); }
+.term .sys { color: var(--blue); }
+.term .out { color: var(--fg); }
+
+.livelog { overflow: auto; flex: 1; font-size: 12px; }
+.ev { display: flex; gap: 8px; padding: 3px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.ev:hover { background: var(--bg-hover); }
+.ev .t { color: var(--fg-dim); font-family: var(--mono); font-size: 11px; flex: none; }
+.ev .tag {
+  flex: none; width: 58px; text-transform: uppercase; font-size: 10px;
+  letter-spacing: .06em; padding-top: 1px;
+}
+.ev.jump .tag { color: var(--green); }
+.ev.call .tag { color: var(--yellow); }
+.ev.session-started .tag { color: var(--blue); }
+.ev.error .tag { color: var(--red); }
+.ev .msg { overflow-wrap: anywhere; }
+.ev .num { margin-left: auto; color: var(--fg-dim); font-family: var(--mono); font-size: 11px; flex: none; }
+
 .term-input { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--border); padding: 4px 10px; }
 .prompt { color: var(--green); font: 12px var(--mono); }
 .bare { flex: 1; background: none; border: 0; color: var(--fg); font: 12px var(--mono); outline: none; }

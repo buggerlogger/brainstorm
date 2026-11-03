@@ -123,6 +123,8 @@
     </section>
   </aside>
 
+  <div class="splitter v" id="split-side" title="drag to resize the sidebar"></div>
+
   <main class="main">
     <div class="tabs" id="tabs"></div>
     <div class="editor-wrap">
@@ -139,10 +141,13 @@
 
 </div>
 
+<div class="splitter h" id="split-panel" title="drag to resize the panel"></div>
+
 <section class="panel">
   <div class="panel-tabs">
     <button class="ptab selected" data-panel="terminal">Terminal</button>
     <button class="ptab" data-panel="flow">Flow</button>
+    <button class="ptab" data-panel="live">Live<span class="badge" id="badge-live" hidden>0</span></button>
     <button class="ptab" data-panel="problems">Problems<span class="badge" id="badge-problems" hidden>0</span></button>
     <button class="ptab" data-panel="output">Output</button>
     <div class="grow"></div>
@@ -151,11 +156,29 @@
   </div>
 
   <div class="panel-body" data-panel="terminal">
+    <div class="term-bar">
+      <select class="input sm" id="shell-kind"></select>
+      <span class="muted small" id="shell-cwd"></span>
+      <div class="grow"></div>
+      <span class="muted small" id="shell-state"></span>
+      <button class="btn sm" id="shell-interrupt" title="Kill and restart the shell (a pipe has no job control)">Stop</button>
+      <button class="btn sm" id="shell-restart" title="Restart the shell">Restart</button>
+    </div>
     <pre class="term" id="term"></pre>
     <div class="term-input">
-      <span class="prompt">brainstorm&nbsp;$</span>
-      <input id="term-cmd" class="bare" autocomplete="off" spellcheck="false" placeholder="status · build --install · verify --file built.jsonl · help">
+      <span class="prompt" id="term-prompt">PS&nbsp;&gt;</span>
+      <input id="term-cmd" class="bare" autocomplete="off" spellcheck="false" placeholder="a real shell: claude -p &quot;hi&quot; · git status · npm test · status (engine)">
     </div>
+  </div>
+
+  <div class="panel-body" data-panel="live" hidden>
+    <div class="term-bar">
+      <span class="muted small" id="live-state">watching…</span>
+      <div class="grow"></div>
+      <label class="check small"><input type="checkbox" id="live-follow" checked> follow</label>
+      <button class="mini" id="live-clear" title="Clear">⌫</button>
+    </div>
+    <div class="livelog" id="livelog"></div>
   </div>
 
   <div class="panel-body" data-panel="flow" hidden>
