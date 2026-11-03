@@ -79,7 +79,7 @@ try {
   console.error(`\n  ERROR  ${err.stack || err.message}`);
   failures++;
 } finally {
-  if (tag) { try { stopWindow(tag); } catch { /* already stopped */ } }
+  if (tag) { try { stopWindow(tag, { close: true }); } catch { /* already stopped */ } }
   console.log(`\n  runner log:\n${windowLog(tag || '').split(/\r?\n/).filter(Boolean).map((l) => `    ${l}`).join('\n')}`);
 }
 

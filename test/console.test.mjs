@@ -112,7 +112,10 @@ try {
     try { rmSync(probeFile); } catch { /* not there */ }
     const D = String.fromCharCode(36);
     const run = `Set-Content -Path '${probeFile}' -Value ("w=" + ${D}Host.UI.RawUI.WindowSize.Width`
-      + ` + " inRedir=" + [Console]::IsInputRedirected + " outRedir=" + [Console]::IsOutputRedirected)`;
+      + ` + " inRedir=" + [Console]::IsInputRedirected + " outRedir=" + [Console]::IsOutputRedirected)`
+      // ...and close the window: a probe window left open is one more stray
+      // shell on the desktop after every test run.
+      + '; exit';
     const r = await api('/api/console', { kind: 'powershell', run });
     check(!!r.pid, 'a window was launched', `${r.kind} via ${r.host}, pid ${r.pid}`);
     console.log(`    ${r.exe} ${(r.args || []).join(' ')}`);

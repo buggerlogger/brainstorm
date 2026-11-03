@@ -34,7 +34,7 @@ const KEEP = process.argv.includes('--keep');
 
 const PROJECT = join(tmpdir(), `ctx-skillswap-${Date.now()}`);
 const WORK = join(PROJECT, 'work');
-const SESSION = randomUUID();
+let SESSION = randomUUID();
 const NEW_ID = randomUUID();
 
 const ALPHA = {
@@ -107,12 +107,25 @@ try {
   check(existsSync(join(WORK, '.claude', 'skills', ALPHA.id, 'SKILL.md')), 'both skills written');
 
   step('control: load ALPHA in a fresh session');
-  const c1 = claude([
-    '-p', `"Invoke the ${ALPHA.id} skill now, then reply with one line: the protocol name and its clearance code."`,
-    '--session-id', SESSION,
-    '--permission-mode', 'bypassPermissions',
-  ]);
-  check(c1.out.includes(ALPHA.code), 'control answer quotes the ALPHA code', c1.out.trim().split('\n').pop());
+  // The Claude API sometimes answers with an error ("... Message ID: msg_...")
+  // instead of a reply. That is not a brainstorm failure, so the control is
+  // retried -- each time with a fresh session id, since a failed attempt may
+  // already have created the old one -- and an API error is named as such.
+  const apiError = (out) => /API Error|Message ID: msg_|overloaded|rate limit/i.test(out);
+  let c1;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt > 1) SESSION = randomUUID();
+    c1 = claude([
+      '-p', `"Invoke the ${ALPHA.id} skill now, then reply with one line: the protocol name and its clearance code."`,
+      '--session-id', SESSION,
+      '--permission-mode', 'bypassPermissions',
+    ]);
+    if (c1.out.includes(ALPHA.code) || !apiError(c1.out)) break;
+    console.log(`    attempt ${attempt}: the Claude API returned an error; retrying`);
+  }
+  const last = c1.out.trim().split('\n').pop();
+  check(c1.out.includes(ALPHA.code), 'control answer quotes the ALPHA code',
+    apiError(c1.out) && !c1.out.includes(ALPHA.code) ? `the Claude API kept failing (not a brainstorm error): ${last}` : last);
   if (!c1.out.includes(ALPHA.code)) throw new Error('control failed; the swap test would be meaningless');
 
   step('extract');

@@ -121,23 +121,39 @@ try {
   const out = rec.since(0);
   const steps = out.steps;
   console.log(`  recorded ${steps.length} step(s), ${out.frames.length} frame(s); the tracer says ${expected.length} call(s) happened after the start\n`);
-  check(steps.length === expected.length, 'one recorded step per API call made after the start', `${steps.length} vs ${expected.length}`);
+  // ⛔ Pair steps with calls BY CALL NUMBER, not by position. A session can
+  // have activity with no request records at all -- the recorder shows it as
+  // steps without a call number, while the tracer, which counts request
+  // records, has no entry for it. Pairing by position then shifted every
+  // later pair by one: 215 "wrong call" failures on one session whose calls
+  // were each recorded correctly.
+  const withCall = steps.filter((s) => s.call !== null && s.call !== undefined);
+  const noCall = steps.filter((s) => s.call === null || s.call === undefined);
+  check(withCall.length === expected.length, 'one recorded step per API call made after the start', `${withCall.length} vs ${expected.length}${noCall.length ? ` (+${noCall.length} without a request record)` : ''}`);
 
+  const expectedByCall = new Map(expected.map((e) => [e.call, e]));
+  const seenCalls = new Set();
   let callMismatch = 0;
   let outMismatch = 0;
-  steps.forEach((s, i) => {
-    const e = expected[i];
-    if (!e) return;
+  for (const s of withCall) {
+    const e = expectedByCall.get(s.call);
+    if (!e || seenCalls.has(s.call)) { callMismatch++; continue; }   // not a live call, or recorded twice
+    seenCalls.add(s.call);
     const fout = out.frames.filter((f) => f.step === s.id && f.io === 'out').map((f) => f.text);
     const same = (a, b) => a.length === b.length && a.every((x, k) => x === b[k]);
-    if (s.call !== e.call) callMismatch++;
     if (!same(fout, e.outputs)) {
       outMismatch++;
-      if (outMismatch <= 3) console.log(`    step ${s.id}: outputs ${fout.length} vs expected ${e.outputs.length}`);
+      if (outMismatch <= 3) console.log(`    step ${s.id} call ${s.call}: outputs ${fout.length} vs expected ${e.outputs.length}`);
     }
-  });
-  check(callMismatch === 0, 'each step is the right API call', `${callMismatch} mismatched`);
+  }
+  check(callMismatch === 0, 'each step is a live API call, recorded once', `${callMismatch} mismatched`);
   check(outMismatch === 0, 'every step\'s OUTPUTS match the assistant records that followed the call', `${outMismatch} mismatched`);
+
+  // A step without a call is only legitimate where the transcript has no
+  // request record to tie it to: activity written before the first one.
+  const firstRequestLine = trace.calls.length ? trace.calls[0].line : Infinity;
+  const strayNoCall = noCall.filter((s) => out.frames.some((f) => f.step === s.id && f.line > firstRequestLine));
+  check(strayNoCall.length === 0, 'steps without a call come only from before the first request record', `${strayNoCall.length} of ${noCall.length}`);
 
   // ---------------------------------------------------------------------------
   // INPUTS, against tool_use_id -- not against the tracer.
@@ -188,6 +204,10 @@ try {
   }
   check(idMismatch === 0, 'every step\'s tool results answer exactly the tools the previous call asked for', `${idMismatch} of ${judged} mismatched`);
   const twice = [...attached.values()].filter((n) => n > 1).length;
+  for (const [id, n] of [...attached].filter(([, n]) => n > 1).slice(0, 3)) {
+    const where = steps.filter((s) => out.frames.some((f) => f.step === s.id && f.io === 'in' && f.toolUseId === id)).map((s) => `call ${s.call}`);
+    console.log(`    result ${id.slice(-6)} shown under ${where.join(' and ')}`);
+  }
   check(twice === 0, 'no tool result is shown under two calls', `${twice} duplicated`);
 
   // Every prompt typed after the start lands in exactly one step.
@@ -198,9 +218,20 @@ try {
     const texts = typeof c === 'string' ? [c] : Array.isArray(c) ? c.filter((p) => p?.type === 'text').map((p) => p.text) : [];
     for (const t of texts) if (t && !t.startsWith('<')) prompts.push(t);
   }
+  // Shown means: the input of a call, or waiting as "not sent yet". A session
+  // that ends with Esc writes "[Request interrupted by user]" after its last
+  // request -- no call ever sends it, so it can only be shown as waiting.
   const shownTexts = out.frames.filter((f) => f.io === 'in' && f.kind === 'text').map((f) => f.text);
-  const lost = prompts.filter((t) => !shownTexts.includes(t));
-  check(lost.length === 0, 'every prompt typed after the start is shown as an input', `${prompts.length - lost.length}/${prompts.length}`);
+  const waiting = out.pending || [];
+  const waitingTexts = waiting.filter((w) => w.kind === 'text').map((w) => w.text);
+  const lost = prompts.filter((t) => !shownTexts.includes(t) && !waitingTexts.includes(t));
+  for (const t of lost.slice(0, 3)) console.log(`    lost prompt: ${JSON.stringify(t.slice(0, 90))}`);
+  check(lost.length === 0, 'every prompt typed after the start is shown (as an input, or waiting to be sent)', `${prompts.length - lost.length}/${prompts.length}`);
+  // ...and "waiting" is not a place to hide a misfiled input: everything in it
+  // must really come after the last request record.
+  const lastRequestLine = trace.calls.length ? trace.calls[trace.calls.length - 1].line : 0;
+  const earlyWaiting = waiting.filter((w) => w.line <= lastRequestLine);
+  check(earlyWaiting.length === 0, 'only inputs written after the last request are waiting to be sent', `${waiting.length} waiting, ${earlyWaiting.length} before L${lastRequestLine}`);
 
   // LIVE ONLY, stated exactly. No PAST call is shown: every step is a call
   // whose request came after the start, or the one call in flight at the

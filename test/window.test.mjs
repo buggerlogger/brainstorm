@@ -94,17 +94,27 @@ try {
   check(lines.length === 2, 'exactly two starts, AAA then BBB', JSON.stringify(lines.map((l) => l.trim())));
 
   step('stop the window');
-  const st = stopWindow(tag);
+  const st = stopWindow(tag, { close: true });
   check(st.ended, 'stop ended the running stub');
   const stopped = await waitFor(() => /stop/.test(windowLog(tag)));
   check(!!stopped, 'the runner left its loop', (windowLog(tag).trim().split(/\r?\n/).pop() || '').slice(0, 80));
+
+  // The terminal is put back every time claude ends -- a hard kill leaves
+  // claude's mouse reporting on, and every drag then types "[555;102;30M".
+  const resets = (windowLog(tag).match(/terminal reset/g) || []).length;
+  check(resets === 2, 'the terminal was reset after each claude ended (killed by the switch, and by the stop)', `${resets} reset(s)`);
+
+  const closed = await waitFor(() => /closing the window/.test(windowLog(tag)));
+  check(!!closed, 'close: true closes the window instead of leaving a stray shell');
+  const gone = await waitFor(() => !pidAlive(runnerPid), 15000);
+  check(!!gone, 'the window\'s process is gone', `runner ${runnerPid}`);
   const lines2 = readFileSync(argLog, 'utf8').split(/\r?\n/).filter(Boolean);
   check(lines2.length === 2, 'stopping did not start a third session');
 } catch (err) {
   console.error(`\n  ERROR  ${err.stack || err.message}`);
   failures++;
 } finally {
-  if (tag) { try { stopWindow(tag); } catch { /* already stopped */ } }
+  if (tag) { try { stopWindow(tag, { close: true }); } catch { /* already stopped */ } }
   console.log(`\n  runner log:\n${windowLog(tag || '').split(/\r?\n/).filter(Boolean).map((l) => `    ${l}`).join('\n')}`);
 }
 

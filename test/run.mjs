@@ -124,6 +124,7 @@ if (ALL) {
   const base = `http://127.0.0.1:${PORT}`;
   try {
     run('ui end to end (headless Edge)', 'ui-e2e.test.mjs', [base]);
+    run('recording view: live calls on screen', 'recording-e2e.test.mjs', [base]);
     run('api: edit, pins, rewind, integrity', 'api.test.mjs', [base]);
     run('shell + live detection (real claude -p)', 'shell.test.mjs', [base]);
     run('real terminal window + attach', 'console.test.mjs', [base, '--open']);

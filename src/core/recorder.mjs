@@ -118,6 +118,9 @@ export class Recorder {
     this.requestCall = new Map(); // api-request id -> call index (assistant.requestRef points here)
     this.seenInputs = new Set();  // hashed keys of every input that has existed, live or not
     this.tailInputs = [];         // baseline inputs written since the last past request
+    // tool_use ids whose result is already on screen. A result is the input of
+    // exactly ONE call; a later request that re-sends it must not show it again.
+    this.shownResults = new Set();
   }
 
   // ------------------------------------------------------------ lifecycle --
@@ -374,6 +377,11 @@ export class Recorder {
       this.addFrames(parts, 'out', role, line);
     } else {
       if (!this.cur || this.cur.outputs > 0) this.newStep(null, line);
+      // Note what is now on screen, so the first request record -- which
+      // re-sends this history in its blobs -- is not taken for new input.
+      // MEASURED: without this a tool result showed under a step with no
+      // call AND under call 0, on two sessions recorded from 10%.
+      for (const p of parts) this.seenInputs.add(hashKey(p));
       this.addFrames(parts, 'in', role, line);
     }
   }
@@ -421,6 +429,7 @@ export class Recorder {
         // 93 old tool results that way, and they all showed up as its input.
         // A tool result is new only if it answers the previous call; anything
         // else from a blob is new only if it has never existed before.
+        if (p.kind === 'tool_result' && p.toolUseId && this.shownResults.has(p.toolUseId)) continue;
         if (p.kind === 'tool_result' && p.toolUseId && this.toolOwner.has(p.toolUseId)) {
           if (this.toolOwner.get(p.toolUseId) !== ci - 1) continue;
         } else if (this.seenInputs.has(hashKey(p))) {
@@ -460,6 +469,7 @@ export class Recorder {
   routeInputs(parts, role, line) {
     for (const p of parts) {
       let target = null;
+      if (p.kind === 'tool_result' && p.toolUseId && this.shownResults.has(p.toolUseId)) continue;
       const owner = p.kind === 'tool_result' && p.toolUseId ? this.toolOwner.get(p.toolUseId) : undefined;
       if (owner !== undefined) {
         // The call after the one that asked. If its record is already in, this
@@ -543,6 +553,7 @@ export class Recorder {
       at: new Date().toISOString(),
     };
     this.frames.push(f);
+    if (io === 'in' && p.kind === 'tool_result' && f.toolUseId) this.shownResults.add(f.toolUseId);
     if (io === 'in') s.inputs++; else s.outputs++;
     s.chars += text.length;
     if (s.first === null) s.first = f.seq;
@@ -563,6 +574,11 @@ export class Recorder {
       seq: this.seq,
       steps: this.steps,
       frames: this.frames.filter((f) => f.seq > from),
+      // Typed (or otherwise written) but not sent with any call yet -- a
+      // prompt waiting for its request, or an interrupt that ended the
+      // session. Shown as the next call, so an action in the terminal is
+      // never invisible just because no call has carried it yet.
+      pending: this.live ? this.pending.map((it) => ({ kind: it.part.kind, role: it.role, line: it.line, toolUseId: it.part.toolUseId || null, detail: firstLine(it.part.text), text: String(it.part.text || '').slice(0, TEXT_CAP) })) : [],
     };
   }
 }

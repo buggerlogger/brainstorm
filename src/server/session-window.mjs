@@ -38,6 +38,7 @@ const DIR = () => join(appDataDir(), 'windows');
 const paths = (tag) => ({
   control: join(DIR(), `${tag}.control.json`),
   pid: join(DIR(), `${tag}.claude.pid`),
+  runnerPid: join(DIR(), `${tag}.runner.pid`),
   runner: join(DIR(), `${tag}.runner.ps1`),
   meta: join(DIR(), `${tag}.meta.json`),
   log: join(DIR(), `${tag}.log`),
@@ -58,6 +59,20 @@ function runnerScript(tag) {
     `$Host.UI.RawUI.WindowTitle = "brainstorm ${tag}"`,
     'function Read-Ctl { try { Get-Content -Raw -LiteralPath $ctl | ConvertFrom-Json } catch { $null } }',
     'function Note($m) { Add-Content -LiteralPath $log -Value ((Get-Date -Format o) + "  " + $m) }',
+    // ⛔ Put the terminal back after claude. claude's interactive screen turns
+    // MOUSE REPORTING on. Save & Resume (and stop) end claude with a hard kill,
+    // so it never turns it off again -- and every mouse move or drag in the
+    // window then arrives as typed text: "[555;102;30M[555;105;30M..." filling
+    // the prompt, exactly as reported. Every mouse mode is switched off, along
+    // with bracketed paste, the alternate screen and a hidden cursor, and the
+    // input already queued is thrown away so the garbage typed while claude
+    // was gone never reaches the shell or the next claude.
+    'function Reset-Terminal {',
+    "  $modes = @('?1000l', '?1001l', '?1002l', '?1003l', '?1005l', '?1006l', '?1015l', '?2004l', '?1049l', '?25h', '0m')",
+    "  [Console]::Write((($modes | ForEach-Object { [char]27 + '[' + $_ }) -join ''))",
+    '  try { $Host.UI.RawUI.FlushInputBuffer() } catch { }',
+    '}',
+    'Reset-Terminal',
     'Note "runner started pid $PID"',
     'while ($true) {',
     '  $c = Read-Ctl',
@@ -92,13 +107,22 @@ function runnerScript(tag) {
     '  Set-Content -LiteralPath $pidFile -Value $p.Id',
     '  $p.WaitForExit()',
     '  Remove-Item -LiteralPath $pidFile -ErrorAction SilentlyContinue',
-    '  Note ("exit " + $p.ExitCode + " for " + $c.resume)',
+    // Whether claude quit or was killed, the terminal may be left in its modes.
+    '  Reset-Terminal',
+    '  Note ("exit " + $p.ExitCode + " for " + $c.resume + "; terminal reset")',
     '  $after = Read-Ctl',
     '  if ($null -eq $after -or $after.stop) { Note "stop after exit"; break }',
     '  if ($after.resume -eq $c.resume -and $after.seq -eq $c.seq) { Note "claude ended by the user"; break }',
     '  Write-Host ""',
     '  Write-Host ("brainstorm: switching to edited session " + $after.resume) -ForegroundColor Yellow',
     '}',
+    // A window asked to CLOSE (tests do this) exits instead of staying open as
+    // a shell -- test windows used to pile up on the desktop after every run.
+    '$fin = Read-Ctl',
+    // NOT `exit`: under -NoExit, `exit` in a script ends the SCRIPT and leaves
+    // the shell open -- measured, the window stayed. Environment.Exit ends the
+    // process, with code 0, so Windows Terminal closes the tab cleanly.
+    'if ($fin -and $fin.close) { Note "closing the window"; [Environment]::Exit(0) }',
     'Write-Host ""',
     'Write-Host "brainstorm: claude is not running. This is a normal shell now." -ForegroundColor DarkGray',
   ].join('\r\n');
@@ -186,13 +210,21 @@ export function resumeInWindow(tag, sessionId) {
   return { tag, sessionId, previous: cur.resume, claudePid: pid, wasRunning: alive, ended: killed };
 }
 
-export function stopWindow(tag) {
+// close: true also closes the WINDOW (tests use it, so their windows do not
+// pile up). The runner exits cleanly when it sees it; if its loop already
+// ended -- claude was quit by hand -- the runner process itself is ended.
+export function stopWindow(tag, { close = false } = {}) {
   const cur = readControl(tag);
   if (!cur) throw new Error(`no window ${tag}`);
-  writeControl(tag, { ...cur, stop: true });
+  writeControl(tag, { ...cur, stop: true, close: !!close });
   const pid = claudePid(tag);
   const ended = pidAlive(pid) ? killTree(pid) : false;
-  return { tag, ended };
+  if (close && !ended) {
+    const m = windowLog(tag).match(/runner started pid (\d+)/);
+    const runner = m ? Number(m[1]) : null;
+    if (runner && pidAlive(runner)) killTree(runner);
+  }
+  return { tag, ended, closed: !!close };
 }
 
 export function listWindows() {

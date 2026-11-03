@@ -121,7 +121,7 @@ try {
   console.error(`\n  ERROR  ${err.stack || err.message}`);
   failures++;
 } finally {
-  try { if (tag) await api('/api/window', { action: 'stop', tag }); } catch { /* already stopped */ }
+  try { if (tag) await api('/api/window', { action: 'stop', tag, close: true }); } catch { /* already stopped */ }
   try {
     if (original) await api('/api/settings', { claudePath: original.claudePath, resumeOnSave: original.resumeOnSave, claudeArgs: original.claudeArgs });
   } catch { /* report below */ }

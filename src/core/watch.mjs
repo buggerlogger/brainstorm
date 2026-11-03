@@ -39,6 +39,12 @@ export class SessionWatcher {
     this.ratio = ratio;
     this.onEvent = onEvent;
     this.dir = cwd ? projectDirForCwd(cwd) : null;
+    // ⛔ More than one folder. The in-page shell keeps the folder it STARTED
+    // in, while `dir` follows whichever session is open -- so after opening
+    // a second session, claude run in the terminal wrote to a project the
+    // watcher was not looking at, and nothing was detected (measured: the
+    // watcher on google-search, claude running in ctxtest-skill).
+    this.alsoDirs = new Set();
     this.seen = new Map();      // file -> { size, mtimeMs, calls, toolCalls }
     this.events = [];
     this.seq = 0;
@@ -70,12 +76,31 @@ export class SessionWatcher {
     this.prime();
   }
 
+  // Also watch the project of another folder -- the shell's.
+  watchAlso(cwd) {
+    if (!cwd) return;
+    const d = projectDirForCwd(cwd);
+    if (d === this.dir || this.alsoDirs.has(d)) return;
+    this.alsoDirs.add(d);
+    // prime it: what is already there is history, not something happening now
+    for (const f of this.listDir(d)) this.seen.set(f.file, { size: f.size, mtimeMs: f.mtimeMs, calls: -1, toolCalls: -1 });
+  }
+
+  dirs() {
+    // a Set: after setCwd, `dir` can land on a folder already in alsoDirs
+    return [...new Set([this.dir, ...this.alsoDirs])].filter(Boolean);
+  }
+
   list() {
-    if (!this.dir || !existsSync(this.dir)) return [];
-    return readdirSync(this.dir)
+    return this.dirs().flatMap((d) => this.listDir(d));
+  }
+
+  listDir(dir) {
+    if (!dir || !existsSync(dir)) return [];
+    return readdirSync(dir)
       .filter((f) => f.endsWith('.jsonl'))
       .map((f) => {
-        const p = join(this.dir, f);
+        const p = join(dir, f);
         try {
           const st = statSync(p);
           return { file: p, id: f.replace(/\.jsonl$/, ''), size: st.size, mtimeMs: st.mtimeMs };
@@ -191,6 +216,7 @@ export class SessionWatcher {
     return {
       cwd: this.cwd,
       dir: this.dir,
+      dirs: this.dirs(),
       watching: !!this.timer,
       files: this.seen.size,
       active: this.active,

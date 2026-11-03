@@ -347,6 +347,8 @@ function ensureWatcher(cwd, ratio) {
     } });
     watcher.autoAttach = !!loadSettings().autoAttach;
     watcher.start();
+    // a shell that already exists was started before there was a watcher
+    if (shell) watcher.watchAlso(shell.cwd);
     logLine(`watching ${watcher.dir}`);
   } else {
     watcher.ratio = ratio;
@@ -357,6 +359,8 @@ function ensureWatcher(cwd, ratio) {
 
 function ensureShell(cwd) {
   if (!shell) shell = new Shell({ cwd: cwd || ws.config?.cwd || process.cwd() });
+  // whatever claude is started from this shell must be seen
+  watcher?.watchAlso(shell.cwd);
   return shell;
 }
 
@@ -559,7 +563,7 @@ const routes = {
     const tag = body.tag || ws.window;
     if (!tag) throw new Error('no session window is open');
     if (action === 'resume') return resumeInWindow(tag, body.sessionId);
-    if (action === 'stop') return stopWindow(tag);
+    if (action === 'stop') return stopWindow(tag, { close: !!body.close });
     if (action === 'log') return { tag, log: windowLog(tag) };
     throw new Error('window action must be open | resume | stop | log');
   },
@@ -807,7 +811,7 @@ const routes = {
       return { ...sh.status(), ran: 'shell' };
     }
     if (action === 'interrupt') { sh.interrupt(); return sh.status(); }
-    if (action === 'restart') { sh.restart(body.kind, body.cwd); return sh.status(); }
+    if (action === 'restart') { sh.restart(body.kind, body.cwd); watcher?.watchAlso(sh.cwd); return sh.status(); }
     throw new Error('shell action must be write | interrupt | restart');
   },
 

@@ -22,7 +22,7 @@
 
 (() => {
   const B = (window.brainstorm = window.brainstorm || {});
-  const R = { seq: 0, steps: [], frames: new Map(), byStep: new Map(), recording: false, status: 'idle', session: null, mode: null };
+  const R = { seq: 0, steps: [], frames: new Map(), byStep: new Map(), pending: [], recording: false, status: 'idle', session: null, mode: null };
   const queue = [];
   let pumping = false;
   let selected = null;      // frame seq shown in the editor
@@ -50,6 +50,7 @@
       R.seq = 0;
     }
     R.steps = r.steps || R.steps;
+    R.pending = r.pending || [];
     const fresh = [];
     for (const f of r.frames || []) {
       if (R.frames.has(f.seq)) continue;
@@ -208,6 +209,35 @@
         n.dataset.recSeq = String(f.seq);
         frag.appendChild(n);
       }
+    }
+    // Written but not sent with any call yet: a prompt waiting for its
+    // request, or an interrupt (Esc) that ended the turn. Without this an
+    // action in the terminal was invisible until -- or unless -- a call sent it.
+    if (R.pending.length) {
+      frag.appendChild(node({
+        depth: 0, twisty: '▾', icon: '○', iconCls: 'thinking',
+        label: 'next call — not sent yet',
+        meta: `${R.pending.length} waiting`,
+      }));
+      R.pending.forEach((w) => {
+        frag.appendChild(node({
+          depth: 2, icon: '→', iconCls: w.kind === 'tool_result' ? 'tool_result' : w.role,
+          label: `${w.kind} — ${w.detail || ''}`,
+          cls: 'muted',
+          onClick: () => {
+            stopAutoJump(true);
+            const key = 'rec:preview';
+            let tab = S.tabs.find((t) => t.key === key);
+            if (!tab) { tab = { key, kind: 'frame', readonly: true }; S.tabs.push(tab); }
+            tab.label = `○ waiting ${w.kind}`;
+            tab.text = w.text || '(no text)';
+            tab.meta = `written, not sent yet · ${w.role} ${w.kind} · transcript L${w.line}`;
+            S.active = key;
+            renderTabs();
+            renderEditor();
+          },
+        }));
+      });
     }
     box.replaceChildren(frag);
   }
