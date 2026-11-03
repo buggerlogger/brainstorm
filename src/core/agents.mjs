@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // agents.mjs — which agent read what.
 //
 // A session is not one context. Every Agent tool call starts a subagent with a

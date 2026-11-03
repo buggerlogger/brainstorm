@@ -26,5 +26,10 @@
     "transcript",
     "debugger"
   ],
-  "license": "UNLICENSED"
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "buggerlogger (https://github.com/buggerlogger)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/buggerlogger/brainstorm.git"
+  }
 }

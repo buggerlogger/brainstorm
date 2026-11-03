@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // ui-e2e.test.mjs — drive the real UI in headless Edge over the DevTools
 // protocol, and fail on ANY uncaught exception or console error.
 //

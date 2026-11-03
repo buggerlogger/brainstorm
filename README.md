@@ -1,5 +1,12 @@
 # brainstorm
 
+> **⚠ Not done yet.** This project is a work in progress. Features are still
+> being built and changed, and nothing here is a release.
+>
+> **© 2026 buggerlogger. All rights reserved.** Proprietary software — no
+> license is granted to use, copy, modify or distribute any part of it. See
+> [LICENSE](LICENSE).
+
 A context debugger for Claude Code sessions, as a desktop app. Open a session,
 watch every API call it makes land in the debugger frame by frame, edit any of
 the context, and **Save & Resume** — claude restarts on the edited session in
@@ -350,3 +357,19 @@ test/                   run.mjs, flow.test.mjs, ui.test.mjs, api.test.mjs,
 The server never writes a `.jsonl`. It writes `BLOCKS.md` and shells out to the
 engine, which re-reads its own artefact and verifies it. The UI can be wrong
 about text; it cannot invent a new way to corrupt a session.
+
+## Status
+
+**Not done yet.** brainstorm is under active development. Interfaces, file
+formats and behaviour can change without notice, and there is no release.
+
+## Copyright
+
+Copyright © 2026 buggerlogger (https://github.com/buggerlogger).
+All rights reserved.
+
+brainstorm is proprietary software. It is **not** open source, and no license
+is granted: you may not use, copy, modify, distribute or create derivative works
+of it, in whole or in part, without prior written permission. Being able to see
+this repository does not grant any right to the software. The full terms are in
+[LICENSE](LICENSE).

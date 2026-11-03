@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // settings.mjs — everything a person can set, in one file, with one schema.
 //
 // The schema is the source of truth for three things at once: the defaults,

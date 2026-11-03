@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // transcript.mjs — read a Claude Code session file and group it the way the
 // API actually sees it.
 //

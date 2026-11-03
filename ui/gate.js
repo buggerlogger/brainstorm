@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+
 /* gate.js — the start gate. The app is blurred and inert until a session is
    chosen, because almost nothing in it means anything without one.
 

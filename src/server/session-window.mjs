@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // session-window.mjs — a terminal window that runs claude, and can be told to
 // switch sessions without being closed.
 //

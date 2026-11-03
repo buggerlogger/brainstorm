@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // shell.test.mjs — the real terminal and live session detection.
 //
 //   node test/shell.test.mjs [http://127.0.0.1:7788]

@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // console.mjs — pop a REAL terminal window on the desktop.
 //
 // The in-page terminal is pipes, so a full-screen TUI cannot render there and

@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // run.mjs — the test runner.
 //
 //   node test/run.mjs            fast: syntax, UI wiring, flow model, zip/export

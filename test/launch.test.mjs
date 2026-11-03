@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // launch.test.mjs — launching brainstorm.exe the way a double-click does.
 //
 //   node test/launch.test.mjs [path/to/brainstorm.exe]

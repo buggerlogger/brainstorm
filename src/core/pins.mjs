@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // pins.mjs — context you add that does not get lost.
 //
 // THE PROBLEM. Anything you type into a block lives in that block. Rewind the

@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 //
 // ctx — unpack a Claude Code session into editable text, change it, and build a
 // session that resumes with your changes.

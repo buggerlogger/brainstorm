@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+
 /* menu.js — one right-click menu for the whole app.
 
    Every tree node says what it is through data-* attributes (data-block-id,

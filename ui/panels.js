@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+
 /* panels.js — settings, agents, search for strings, who-read-it, export,
    Save & Resume, and the app heartbeat. */
 

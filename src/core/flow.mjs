@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // flow.mjs — reconstruct, in order, everything that entered the model's
 // context on each API call, so it can be stepped through like a debugger.
 //

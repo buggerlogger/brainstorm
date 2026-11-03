@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // export.mjs — dump a session's context to sorted folders, or to a .zip.
 //
 // The tree is the same either way, and every name sorts into the order you

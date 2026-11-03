@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // shell.mjs — a real shell in the bottom panel.
 //
 // WHAT THIS IS. A long-lived PowerShell (or cmd, or bash) process whose stdout

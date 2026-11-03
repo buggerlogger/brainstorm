@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // api.test.mjs — exercise the IDE's HTTP API the way the UI does.
 //
 //   node test/api.test.mjs [http://127.0.0.1:7788]

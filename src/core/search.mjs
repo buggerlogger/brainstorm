@@ -1,3 +1,7 @@
+// Copyright (c) 2026 buggerlogger. All rights reserved.
+// Proprietary and confidential. No license is granted to use, copy, modify or
+// distribute this file, in whole or in part. See LICENSE.
+//
 // search.mjs — find a session, and find a string inside one.
 //
 // findSessions answers the start gate: you type something, it lists sessions.
