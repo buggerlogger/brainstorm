@@ -1323,8 +1323,8 @@ function readBody(req) {
 function runCli(args) {
   // Packaged: the exe IS the engine, re-invoked with --engine.
   const r = selfPath()
-    ? spawnSync(process.execPath, [selfPath(), ...args], { encoding: 'utf8' })
-    : spawnSync(process.execPath, ['--engine', ...args], { encoding: 'utf8' });
+    ? spawnSync(process.execPath, [selfPath(), ...args], { encoding: 'utf8', windowsHide: true })
+    : spawnSync(process.execPath, ['--engine', ...args], { encoding: 'utf8', windowsHide: true });
   return { code: r.status ?? 1, out: (r.stdout || '') + (r.stderr || '') };
 }
 

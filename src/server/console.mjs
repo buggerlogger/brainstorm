@@ -45,7 +45,7 @@ import { randomUUID } from 'node:crypto';
 const IS_WIN = platform() === 'win32';
 
 function which(exe) {
-  const probe = IS_WIN ? spawnSync('where', [exe], { encoding: 'utf8' }) : spawnSync('which', [exe], { encoding: 'utf8' });
+  const probe = IS_WIN ? spawnSync('where', [exe], { encoding: 'utf8', windowsHide: true }) : spawnSync('which', [exe], { encoding: 'utf8' });
   if (probe.status !== 0) return null;
   const first = String(probe.stdout || '').split(/\r?\n/).find((l) => l.trim());
   return first ? first.trim() : null;

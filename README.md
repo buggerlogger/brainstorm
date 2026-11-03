@@ -77,9 +77,36 @@ any agent to step through its own flow.
 the UI are inside one 89 MB file. It opens an Edge app window — chromeless,
 its own taskbar entry — with a **separate profile** under
 `%APPDATA%\brainstorm`, so nothing from your own browser (cookies, history,
-extensions) is read or used. Closing the window closes the app: the window
-sends a heartbeat, and the server exits when it stops. A second launch finds
-the running app and opens another window onto it.
+extensions) is read or used. A second launch finds the running app and opens
+another window onto it.
+
+**There is no console window.** The exe is a console-subsystem binary, so a
+double-click used to open a black log window beside the app — and closing that
+window killed the server under the app. The visible launcher now starts a copy
+of itself with no console and exits in ~60 ms; the copy logs to
+`%APPDATA%rainstormpp.log`. `--console` keeps the old behaviour.
+
+**The app lives as long as a window is open — including one in the
+background.** Presence used to be a timer heartbeat, and Edge throttles a
+background window's timers to about once a *minute* after five minutes, so
+the server took the silence for a closed window and exited under it (found
+from a real report: a window open 6 minutes, nothing listening on its port).
+Presence is now a held-open connection: a closed window drops it at once, a
+background window keeps it. Measured: 35 s of total silence from an open
+window, server still up; window closed, server gone 10–12 s later. The window
+is also launched with the switches that stop Edge throttling it, so follow
+mode keeps stepping while you work in the terminal — and the profile folder is
+named after those switches, because Edge runs one process per profile and a
+window from an older build would otherwise swallow the new launch with its
+old, throttled flags.
+
+If the server is ever gone anyway, the window says so in a red banner, and the
+start screen says "the brainstorm server is not running" instead of looking
+like your session does not exist.
+
+Rebuilding never needs the app closed: a running exe is locked against
+deletion but not against renaming, so the build moves it aside and writes the
+new one in its place.
 
 Inside the exe the engine is the exe itself, re-invoked as
 `brainstorm.exe --engine <verb>` — there is no `ctx.mjs` on disk to hand to

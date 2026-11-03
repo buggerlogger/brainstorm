@@ -430,3 +430,14 @@ body.gated .titlebar, body.gated .shell, body.gated .panel, body.gated .statusba
 .node.flash { animation: flash .9s ease-out; }
 @keyframes flash { from { background: rgba(78, 201, 176, .45); } to { background: transparent; } }
 .activity .grow { flex: 1; }
+
+/* ---------- server gone ---------- */
+.offline {
+  position: fixed; left: 50%; top: 46px; transform: translateX(-50%); z-index: 150;
+  max-width: min(720px, calc(100vw - 32px));
+  background: #5a1d1d; color: #ffd7d7; border: 1px solid #be4040; border-radius: 6px;
+  padding: 10px 14px; font-size: 13px; line-height: 1.5;
+  box-shadow: 0 10px 34px rgba(0,0,0,.5);
+}
+.offline[hidden] { display: none; }
+.offline strong { color: #fff; }

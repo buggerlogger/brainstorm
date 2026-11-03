@@ -16,7 +16,7 @@
 // code-signing certificate this repo does not have, not a defect.
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync, writeFileSync, readdirSync, statSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, copyFileSync, writeFileSync, readdirSync, statSync, existsSync, rmSync, renameSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,8 +42,27 @@ function run(cmd, args, opts = {}) {
   }
 }
 
-rmSync(DIST, { recursive: true, force: true });
+// ⛔ Do not rmSync the whole of dist/. If the app is OPEN, Windows locks the
+// running brainstorm.exe against deletion and the build died with EPERM --
+// i.e. you could not rebuild while using the app. A running image CAN be
+// renamed, though, so it is moved aside (it keeps running from the new name)
+// and the new exe is written in its place. Leftover .old files are removed
+// on the next build once nothing runs them.
 mkdirSync(DIST, { recursive: true });
+for (const f of readdirSync(DIST)) {
+  const p = join(DIST, f);
+  try {
+    rmSync(p, { recursive: true, force: true });
+  } catch (err) {
+    if (f === (IS_WIN ? 'brainstorm.exe' : 'brainstorm') && (err.code === 'EPERM' || err.code === 'EBUSY')) {
+      const aside = join(DIST, `brainstorm.old-${Date.now()}.exe`);
+      renameSync(p, aside);
+      console.log(`   the app is running; moved the running exe aside to ${aside}`);
+    } else if (!/\.old-\d+\.exe$/.test(f)) {
+      throw err;
+    }
+  }
+}
 
 step('bundle');
 run(npx, ['--yes', 'esbuild@0.28.2',

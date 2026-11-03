@@ -41,7 +41,16 @@ async function api(path, body) {
   const opt = body === undefined
     ? {}
     : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
-  const res = await fetch(path, opt);
+  let res;
+  try {
+    res = await fetch(path, opt);
+  } catch (err) {
+    // A network failure here means the server process is gone. Say THAT --
+    // "Failed to fetch" under a search box reads like "no such session".
+    window.brainstorm?.offline?.();
+    throw new Error('the brainstorm server is not running — reopen brainstorm.exe');
+  }
+  window.brainstorm?.online?.();
   const text = await res.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }

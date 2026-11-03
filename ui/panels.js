@@ -7,13 +7,33 @@
   const B = (window.brainstorm = window.brainstorm || {});
   B.settings = B.settings || null;
 
-  /* ------------------------------------------------------------ heartbeat --- */
-  // The app window pings the server. When the window closes the pings stop and
-  // the server exits -- otherwise closing the app would leave it running
-  // headless in the background with nothing on screen to stop it.
-  const beat = () => fetch('/api/heartbeat', { method: 'POST' }).catch(() => {});
-  beat();
-  setInterval(beat, 4000);
+  /* ------------------------------------------------------------- presence --- */
+  // The window holds one connection open to the server for as long as it is
+  // open. That -- not a timer -- is how the server knows a window exists: a
+  // timer heartbeat got throttled to once a minute in a background window, the
+  // server took the silence for a closed window and exited under it.
+  //
+  // EventSource reconnects by itself. If it cannot, the server is gone, and
+  // the page says so instead of answering every search with "no matches".
+  let offlineTimer = null;
+  function setOffline(off) {
+    const b = $('#offline');
+    if (!b) return;
+    if (off) {
+      if (offlineTimer || !b.hidden) return;
+      // a reload or a brief blip reconnects within a second or two
+      offlineTimer = setTimeout(() => { b.hidden = false; offlineTimer = null; }, 2500);
+    } else {
+      clearTimeout(offlineTimer);
+      offlineTimer = null;
+      b.hidden = true;
+    }
+  }
+  const presence = new EventSource('/api/presence');
+  presence.addEventListener('hello', () => setOffline(false));
+  presence.addEventListener('error', () => setOffline(true));
+  B.offline = () => setOffline(true);
+  B.online = () => setOffline(false);
 
   /* ------------------------------------------------------------- settings --- */
 

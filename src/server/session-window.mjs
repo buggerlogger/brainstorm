@@ -108,7 +108,7 @@ function claudePid(tag) {
 function killTree(pid) {
   if (!pid) return false;
   if (IS_WIN) {
-    const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { encoding: 'utf8' });
+    const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { encoding: 'utf8', windowsHide: true });
     return r.status === 0;
   }
   try { process.kill(-pid, 'SIGTERM'); return true; } catch { try { process.kill(pid, 'SIGTERM'); return true; } catch { return false; } }

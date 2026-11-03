@@ -123,6 +123,7 @@ if (ALL) {
   } finally {
     srv.kill();
   }
+  run('presence: background window keeps the app alive', 'presence.test.mjs');
   run('session window switches in place', 'window.test.mjs');
   run('skill swap (two real claude sessions)', 'skillswap.test.mjs');
 }
@@ -137,6 +138,8 @@ if (EXE) {
     const exe = join(ROOT, 'dist', process.platform === 'win32' ? 'brainstorm.exe' : 'brainstorm');
     const srv = await startServer(exe, ['--no-window', '--port', String(EXE_PORT)], EXE_PORT);
     try { run('exe end to end', 'exe.test.mjs', [`http://127.0.0.1:${EXE_PORT}`]); } finally { srv.kill(); }
+    run('exe presence', 'presence.test.mjs', [exe]);
+    run('exe launch: no console, flags, close ends it', 'launch.test.mjs', [exe]);
   }
 }
 

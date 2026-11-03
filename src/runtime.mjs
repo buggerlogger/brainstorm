@@ -61,6 +61,10 @@ export function readUi(rel) {
 // Where per-user state lives. Not next to the exe: Program Files is not
 // writable, and a portable exe on a USB stick should not scatter files there.
 export function appDataDir() {
+  // BRAINSTORM_HOME isolates an instance completely -- its own lock file,
+  // settings, window profile and logs. Tests use it so they never attach to
+  // the copy a person has open; it also makes a portable copy possible.
+  if (process.env.BRAINSTORM_HOME) return process.env.BRAINSTORM_HOME;
   if (platform() === 'win32') {
     return join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'brainstorm');
   }

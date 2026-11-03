@@ -40,6 +40,32 @@ import { openConsole, availableConsoles } from './console.mjs';
 // this is running from source or packaged inside brainstorm.exe.
 let lastBeat = 0;
 
+// Window presence: one held-open server-sent-events connection per window.
+let presenceOpen = 0;
+let presenceSeen = false;
+let presenceZeroAt = 0;
+
+function presence(req, res) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-store',
+    connection: 'keep-alive',
+  });
+  presenceOpen++;
+  presenceSeen = true;
+  presenceZeroAt = 0;
+  res.write(`event: hello\ndata: ${JSON.stringify({ version: VERSION, windows: presenceOpen })}\n\n`);
+  // A comment every 20 s keeps any intermediary from idling the stream out.
+  const keep = setInterval(() => res.write(': keep-alive\n\n'), 20000);
+  keep.unref();
+  const gone = () => {
+    clearInterval(keep);
+    presenceOpen = Math.max(0, presenceOpen - 1);
+    req.off('close', gone);
+  };
+  req.on('close', gone);
+}
+
 // Engine verbs, still usable from the terminal as a shorthand that runs the
 // bundled engine rather than whatever `ctx` happens to be on PATH.
 const VERBS = new Set(['list', 'extract', 'status', 'build', 'verify', 'help', '--help']);
@@ -87,6 +113,9 @@ function engine(args, { timeout = 600000 } = {}) {
     encoding: 'utf8',
     timeout,
     maxBuffer: 256 * 1024 * 1024,
+    // The app's server runs with no console. Without this every extract and
+    // build would flash a black console window on screen for its duration.
+    windowsHide: true,
   });
   const out = `${r.stdout || ''}${r.stderr || ''}`;
   logLine(`ctx ${args.join(' ')}  -> exit ${r.status ?? 'null'}`);
@@ -313,7 +342,7 @@ function reveal(path) {
 const routes = {
   // --- app: version, heartbeat, settings ------------------------------------
 
-  'GET /api/version': () => ({ version: VERSION, sea: IS_SEA, node: process.version, appData: appDataDir() }),
+  'GET /api/version': () => ({ version: VERSION, sea: IS_SEA, node: process.version, appData: appDataDir(), windows: presenceOpen }),
 
   // The app window pings this. When the window is closed the pings stop and
   // the server exits (see startIde) -- otherwise closing the app would leave a
@@ -919,6 +948,7 @@ export function startIde({ port = 7788, dir = null, session = null, exitWhenClos
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
+    if (req.method === 'GET' && url.pathname === '/api/presence') return presence(req, res);
     const key = `${req.method} ${url.pathname}`;
     const handler = routes[key];
     if (!handler) {
@@ -942,18 +972,31 @@ export function startIde({ port = 7788, dir = null, session = null, exitWhenClos
     if (onListening) onListening(real);
   });
 
-  // App mode: the window sends a heartbeat every few seconds. Once one has
-  // arrived, a silence longer than the grace period means the window is gone,
-  // and the server goes with it -- the way closing an app closes the app.
+  // App mode: the server lives exactly as long as some window has it open.
+  //
+  // ⛔ This used to be a TIMER heartbeat: the page POSTed every 4 s and the
+  // server exited after 15 s of silence. Edge throttles timers in a window
+  // that is in the background, and after 5 minutes hidden it lets them fire
+  // about once a MINUTE -- so the server decided the window had closed while
+  // it was simply behind the terminal, exited, and left an open window whose
+  // every request failed. Measured on a real report: the window had been
+  // open 6 minutes and its port had nothing listening.
+  //
+  // Presence is now a held-open connection (/api/presence). A closed window
+  // drops it at once; a background window keeps it, because throttling
+  // delays timers and never closes sockets. The grace only covers a reload,
+  // where the connection drops and comes straight back.
   if (exitWhenClosed) {
-    const GRACE_MS = 15000;
+    const GRACE_MS = 10000;
     const t = setInterval(() => {
-      if (lastBeat && Date.now() - lastBeat > GRACE_MS) {
-        console.log('  app window closed; exiting');
+      if (!presenceSeen || presenceOpen > 0) { presenceZeroAt = 0; return; }
+      if (!presenceZeroAt) presenceZeroAt = Date.now();
+      if (Date.now() - presenceZeroAt > GRACE_MS) {
+        console.log(`  ${new Date().toISOString()}  no window has been connected for ${GRACE_MS / 1000}s; exiting`);
         try { shell?.dispose(); } catch { /* ignore */ }
         process.exit(0);
       }
-    }, 2000);
+    }, 1000);
     t.unref();
   }
   return server;
