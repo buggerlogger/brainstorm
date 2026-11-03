@@ -262,6 +262,20 @@ body.resizing iframe, body.resizing .editor { pointer-events: none; }
 .term .sys { color: var(--blue); }
 .term .out { color: var(--fg); }
 
+.proclist { overflow: auto; flex: 1; font-size: 12px; }
+.proc {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 10px; border-bottom: 1px solid var(--border);
+}
+.proc:hover { background: var(--bg-hover); }
+.proc .dot { color: var(--fg-dim); flex: none; }
+.proc.live .dot { color: var(--green); }
+.proc.attached { background: var(--bg-select); }
+.proc .pid { font-family: var(--mono); flex: none; width: 76px; }
+.proc .msg { color: var(--fg-dim); flex: none; width: 70px; }
+.proc .num { margin-left: auto; color: var(--fg-dim); font-family: var(--mono); font-size: 11px; }
+.proc .btn { flex: none; }
+
 .livelog { overflow: auto; flex: 1; font-size: 12px; }
 .ev { display: flex; gap: 8px; padding: 3px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .ev:hover { background: var(--bg-hover); }

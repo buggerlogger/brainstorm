@@ -63,11 +63,43 @@ running whatever you type. Engine verbs (`status`, `build`, `verify`) are
 intercepted and run the *bundled* engine, so the terminal and the UI can never
 drift onto two implementations.
 
-It is pipes, not a pseudo-terminal. Stated plainly because it matters: a
-full-screen TUI (vim, top, interactive `claude`) will not render, since it
-wants cursor control a pipe cannot carry. `claude -p "..."` works perfectly.
-A real PTY needs a native module and a C++ toolchain; rather than ship a
-terminal that looks real and then garbles, the limit is in the status bar.
+It is pipes, not a pseudo-terminal, so a full-screen TUI will not render
+there. `claude -p "..."` works perfectly.
+
+**Open terminal ↗** is the answer to the rest: it pops a *real* terminal
+window on your desktop, in the project's directory, with a genuine TTY — run
+interactive `claude` in it yourself. This is the x64dbg shape: the debugger
+does not try to be the program, it attaches to one that is already running.
+
+How that launch was chosen, measured on Windows 11 with Windows Terminal set
+as the default terminal application. The probe made the new window write its
+own console state to a file:
+
+| strategy | result |
+|---|---|
+| `wt.exe -w new -d <cwd> powershell -NoExit -File <script>` | **ok** — `inRedir=False outRedir=False` |
+| spawn with `stdio: 'inherit'` | ran, but `inRedir=True` — not typable |
+| spawn with `detached: true` | **failed** — argv dropped entirely |
+| `cmd /c start "t" /D <cwd> powershell …` | **failed**, detached or not |
+| `conhost.exe powershell …` | **failed** |
+
+Two obvious things are wrong here. `detached: true` — the documented way to
+give a child its own console — loses the command line: those processes appear
+in `Win32_Process` as a bare `"powershell.exe"` with no arguments. And `start`
+never ran its command either. Both are consequences of the default-terminal
+handoff. Only `wt.exe` produced a window with input *and* output unredirected,
+which is what interactive actually means. The `start` path is kept for machines
+with no Windows Terminal, and is marked untested rather than claimed to work.
+
+A command to pre-run goes into a script file, never onto a command line:
+quoting it through cmd and PowerShell and wt is three chances to corrupt it,
+and an earlier version "escaped" it by *stripping* double quotes, which
+silently changed what the window ran.
+
+**Attach.** Sessions in the project, newest first, live ones marked — a process
+list. Attach to read and edit the context of a session while it runs, or turn
+on auto-attach (skipped while you have unsaved edits, because switching the
+editor out from under someone loses work).
 
 **Live.** Start a Claude session anywhere — this terminal, your own Windows
 Terminal, an editor extension — and its context is debugged as it runs:
@@ -146,6 +178,7 @@ node test/run.mjs              syntax + flow model      (fast)
 node test/run.mjs --all        also the HTTP API and a real end-to-end swap
 node test/sweep.mjs            the flow model over every transcript on the box
 node test/shell.test.mjs       the terminal, and live detection of a real session
+node test/console.test.mjs --open   pops a window and proves it is a real TTY
 ```
 
 `test/shell.test.mjs` runs `claude -p` **through the IDE's own shell** and
@@ -172,6 +205,7 @@ src/core/pins.mjs       sticky context that survives a rewind
 src/core/watch.mjs      session detection; jumps and calls, live
 src/server/ide.mjs      the HTTP API (loopback only)
 src/server/shell.mjs    the real shell behind the terminal
+src/server/console.mjs  popping a real terminal window on the desktop
 ui/                     the editor: index.html, app.js, styles.css
 test/                   run.mjs, flow.test.mjs, ui.test.mjs, api.test.mjs,
                         shell.test.mjs, skillswap.test.mjs, sweep.mjs

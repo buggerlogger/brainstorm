@@ -28,6 +28,7 @@ import { traceFlow, probe, diffFlow } from '../core/flow.mjs';
 import { loadPins, savePins, newPin, applyPins, purgePin, rewindTo, ANCHORS } from '../core/pins.mjs';
 import { Shell, SHELLS, DEFAULT_SHELL } from './shell.mjs';
 import { SessionWatcher } from '../core/watch.mjs';
+import { openConsole, availableConsoles } from './console.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = pathResolve(HERE, '..', '..');
@@ -220,8 +221,23 @@ function ensureWatcher(cwd, ratio) {
     watcher = new SessionWatcher({ cwd, ratio, onEvent: (ev) => {
       if (ev.type === 'jump') logLine(`live jump  call ${ev.call}  ~${ev.tokens} tok  (${ev.session.slice(0, 8)})`);
       else if (ev.type === 'call') logLine(`live call  ${ev.label}`);
-      else if (ev.type === 'session-started') logLine(`live session ${ev.session.slice(0, 8)} started`);
+      else if (ev.type === 'session-started') {
+        logLine(`live session ${ev.session.slice(0, 8)} started`);
+        // Auto-attach is opt-in. Switching the editor out from under someone
+        // mid-edit because a background session happened to start is the kind
+        // of helpfulness that loses work.
+        if (watcher.autoAttach && !ws.dirty.size) {
+          try {
+            const out = workDirFor(ev.file);
+            const r = engine(['extract', '--session', ev.file, '--dir', out]);
+            if (r.code === 0) { loadWorkspace(out); logLine(`auto-attached ${ev.session.slice(0, 8)}`); }
+          } catch (err) { logLine(`auto-attach failed: ${err.message}`); }
+        } else if (watcher.autoAttach) {
+          logLine(`auto-attach skipped: ${ws.dirty.size} unsaved edit(s)`);
+        }
+      }
     } });
+    watcher.autoAttach = false;
     watcher.start();
     logLine(`watching ${watcher.dir}`);
   } else {
@@ -427,6 +443,56 @@ const routes = {
   },
 
   // --- live session debugging ----------------------------------------------
+
+  // --- a real terminal window on the desktop --------------------------------
+
+  'GET /api/console': () => ({
+    consoles: availableConsoles(),
+    cwd: ws.config?.cwd || process.cwd(),
+  }),
+
+  'POST /api/console': (body) => {
+    const cwd = body.cwd || ws.config?.cwd || process.cwd();
+    const r = openConsole({ kind: body.kind, cwd, run: body.run || '' });
+    logLine(`opened ${r.kind} window in ${cwd}${body.run ? ` running ${JSON.stringify(String(body.run).slice(0, 80))}` : ''}`);
+    // Make sure the watcher is pointed at the directory that window will write
+    // into, or a session started there would go unnoticed.
+    ensureWatcher(cwd, ws.config?.tokens?.charsPerToken || 4);
+    return r;
+  },
+
+  // --- the attach list: sessions, like a process list -----------------------
+
+  'GET /api/sessions': (body, url) => {
+    const cwd = url.searchParams.get('cwd') || ws.config?.cwd || process.cwd();
+    const w = ensureWatcher(cwd, ws.config?.tokens?.charsPerToken || 4);
+    const now = Date.now();
+    const HOT_MS = 15000;
+    const rows = w.list()
+      .map((f) => ({
+        ...f,
+        idleMs: Math.max(0, now - f.mtimeMs),
+        live: now - f.mtimeMs < HOT_MS,
+        attached: ws.config?.sessionId === f.id,
+      }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return {
+      cwd,
+      dir: w.dir,
+      autoAttach: !!w.autoAttach,
+      hotMs: HOT_MS,
+      sessions: rows,
+    };
+  },
+
+  'POST /api/sessions': (body) => {
+    const w = ensureWatcher(body.cwd || ws.config?.cwd, ws.config?.tokens?.charsPerToken || 4);
+    if (body.autoAttach !== undefined) {
+      w.autoAttach = !!body.autoAttach;
+      logLine(`auto-attach ${w.autoAttach ? 'on' : 'off'}`);
+    }
+    return { autoAttach: !!w.autoAttach };
+  },
 
   'GET /api/live': (body, url) => {
     if (!watcher) return { watching: false, events: [], seq: 0 };

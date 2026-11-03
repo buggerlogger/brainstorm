@@ -122,7 +122,10 @@ if (ALL) {
   }
 }
 
-// 5. the end-to-end skill swap: two real Claude sessions
+// 5. the real terminal window and the attach list
+if (ALL) run('console + attach', [join(HERE, 'console.test.mjs'), `http://127.0.0.1:7799`]);
+
+// 6. the end-to-end skill swap: two real Claude sessions
 if (ALL) run('skill swap (end to end)', [join(HERE, 'skillswap.test.mjs')]);
 
 console.log('\n════ summary');

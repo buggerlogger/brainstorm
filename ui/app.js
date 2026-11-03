@@ -865,6 +865,83 @@ async function pollLive() {
   } catch (err) { /* retry next tick */ }
 }
 
+/* ---------------------------------------------------------------- attach --- */
+/* The x64dbg shape: you run the program, the debugger attaches to it. The
+   session list is the process list -- every transcript in the watched project,
+   newest first, with the live ones marked. */
+
+async function openRealTerminal(kind) {
+  try {
+    const r = await api('/api/console', { kind, cwd: S.state && S.state.config ? S.state.config.cwd : undefined });
+    termWrite('[opened ' + r.kind + ' window in ' + r.cwd + ']', 'sys');
+    status('terminal opened — run claude there, then Attach');
+    await refreshSessions();
+  } catch (err) { status(err.message, 'err'); termWrite(err.message, 'err'); }
+}
+
+async function loadConsoleKinds() {
+  try {
+    const r = await api('/api/console');
+    const sel = $('#console-kind');
+    sel.replaceChildren(...r.consoles.map((c) => {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = c.label;
+      o.title = c.note || '';
+      return o;
+    }));
+    $('#console-cwd').textContent = r.cwd || '';
+  } catch (err) { /* no session open yet */ }
+}
+
+const ago = (ms) => {
+  if (ms < 1000) return 'now';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + 's ago';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.round(m / 60);
+  if (h < 48) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+};
+
+async function refreshSessions() {
+  try {
+    const r = await api('/api/sessions');
+    $('#attach-dir').textContent = r.dir || '';
+    $('#auto-attach').checked = !!r.autoAttach;
+    const box = $('#attach-list');
+    const frag = document.createDocumentFragment();
+    if (!r.sessions.length) {
+      frag.appendChild(el('div', 'muted pad small', 'No sessions in this project yet. Open a terminal and run claude.'));
+    }
+    for (const sess of r.sessions) {
+      const row = el('div', 'proc' + (sess.attached ? ' attached' : '') + (sess.live ? ' live' : ''));
+      row.appendChild(el('span', 'dot', sess.live ? '●' : '○'));
+      row.appendChild(el('span', 'pid', sess.id.slice(0, 8)));
+      row.appendChild(el('span', 'msg', sess.attached ? 'attached' : (sess.live ? 'running' : 'idle')));
+      row.appendChild(el('span', 'num', fmt(sess.bytes) + 'B · ' + ago(sess.idleMs)));
+      const btn = el('button', 'btn sm' + (sess.attached ? '' : ' primary'), sess.attached ? 'Re-read' : 'Attach');
+      btn.addEventListener('click', (e) => { e.stopPropagation(); attachSession(sess.id); });
+      row.appendChild(btn);
+      frag.appendChild(row);
+    }
+    box.replaceChildren(frag);
+  } catch (err) { /* no workspace yet */ }
+}
+
+async function attachSession(id) {
+  try {
+    status('attaching to ' + id.slice(0, 8) + '…');
+    const r = await api('/api/live', { action: 'attach', session: id });
+    if (r.state) { S.state = r.state; renderAll(); }
+    await trace('source', { quiet: true });
+    termWrite('[attached ' + id + ']', 'sys');
+    status('attached to ' + id.slice(0, 8));
+    await refreshSessions();
+  } catch (err) { status(err.message, 'err'); termWrite(err.message, 'err'); }
+}
+
 /* ------------------------------------------------------------- splitters --- */
 /* Drag to resize. The sizes are CSS custom properties on <body>, so the grid
    stays the single source of truth and nothing is laid out by hand.
@@ -929,6 +1006,7 @@ function selectView(v) {
 function selectPanel(p) {
   S.panel = p;
   if (p === 'live') { S.liveUnread = 0; $('#badge-live').hidden = true; }
+  if (p === 'attach') refreshSessions();
   for (const b of document.querySelectorAll('.ptab')) b.classList.toggle('selected', b.dataset.panel === p);
   for (const s of document.querySelectorAll('.panel-body')) s.hidden = s.dataset.panel !== p;
 }
@@ -950,6 +1028,14 @@ const restartShell = async (kind) => {
 $('#shell-restart').addEventListener('click', () => restartShell($('#shell-kind').value));
 $('#shell-kind').addEventListener('change', (e) => restartShell(e.target.value));
 $('#live-clear').addEventListener('click', () => { $('#livelog').replaceChildren(); S.liveEvents = []; });
+$('#console-open').addEventListener('click', () => openRealTerminal($('#console-kind').value));
+$('#attach-refresh').addEventListener('click', refreshSessions);
+$('#auto-attach').addEventListener('change', async (e) => {
+  try {
+    await api('/api/sessions', { autoAttach: e.target.checked });
+    status('auto-attach ' + (e.target.checked ? 'on' : 'off'));
+  } catch (err) { status(err.message, 'err'); }
+});
 $('#pin-add').addEventListener('click', () => editPin('new'));
 $('#pin-save').addEventListener('click', savePin);
 $('#pin-cancel').addEventListener('click', () => { S.editingPin = null; $('#pin-edit').hidden = true; renderPins(); });
@@ -1037,6 +1123,11 @@ document.addEventListener('keydown', (e) => {
   await loadProjects();
   await pollShell();
   await pollLive();
+  await loadConsoleKinds();
+  await refreshSessions();
   setInterval(pollShell, 600);
   setInterval(pollLive, 1200);
+  // Only while the Attach panel is open: a process list nobody is looking
+  // at does not need rescanning every two seconds.
+  setInterval(() => { if (S.panel === 'attach') refreshSessions(); }, 2000);
 })();

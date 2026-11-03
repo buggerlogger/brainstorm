@@ -147,6 +147,7 @@
   <div class="panel-tabs">
     <button class="ptab selected" data-panel="terminal">Terminal</button>
     <button class="ptab" data-panel="flow">Flow</button>
+    <button class="ptab" data-panel="attach">Attach</button>
     <button class="ptab" data-panel="live">Live<span class="badge" id="badge-live" hidden>0</span></button>
     <button class="ptab" data-panel="problems">Problems<span class="badge" id="badge-problems" hidden>0</span></button>
     <button class="ptab" data-panel="output">Output</button>
@@ -163,12 +164,31 @@
       <span class="muted small" id="shell-state"></span>
       <button class="btn sm" id="shell-interrupt" title="Kill and restart the shell (a pipe has no job control)">Stop</button>
       <button class="btn sm" id="shell-restart" title="Restart the shell">Restart</button>
+      <select class="input sm" id="console-kind" title="Which terminal to open"></select>
+      <button class="btn sm primary" id="console-open" title="Open a REAL terminal window with a real TTY — run claude there yourself">Open terminal ↗</button>
     </div>
     <pre class="term" id="term"></pre>
     <div class="term-input">
       <span class="prompt" id="term-prompt">PS&nbsp;&gt;</span>
       <input id="term-cmd" class="bare" autocomplete="off" spellcheck="false" placeholder="a real shell: claude -p &quot;hi&quot; · git status · npm test · status (engine)">
     </div>
+  </div>
+
+  <div class="panel-body" data-panel="attach" hidden>
+    <div class="term-bar">
+      <span class="muted small">sessions in</span>
+      <span class="muted small" id="attach-dir"></span>
+      <div class="grow"></div>
+      <span class="muted small" id="console-cwd"></span>
+      <label class="check small" title="Open a new session automatically. Skipped while you have unsaved edits."><input type="checkbox" id="auto-attach"> auto-attach</label>
+      <button class="mini" id="attach-refresh" title="Rescan">⟳</button>
+    </div>
+    <div class="muted pad small">
+      Run <code>claude</code> in a real terminal — the one above, or any window you
+      already have open. Its session appears here. Attach to read and edit its
+      context while it runs.
+    </div>
+    <div class="proclist" id="attach-list"></div>
   </div>
 
   <div class="panel-body" data-panel="live" hidden>
