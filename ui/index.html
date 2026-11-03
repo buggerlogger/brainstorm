@@ -28,10 +28,11 @@
     <button class="act selected" data-view="explorer" title="Explorer">☰</button>
     <button class="act" data-view="debug" title="Context debugger">▷</button>
     <button class="act" data-view="probe" title="Find in context">⌕</button>
+    <button class="act" data-view="pins" title="Pinned context — survives rewind">⊕</button>
     <button class="act" data-view="chat" title="Resume the chat">✉</button>
   </nav>
 
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar">
     <!-- EXPLORER -->
     <section class="view" data-view="explorer">
       <div class="view-head">Explorer
@@ -74,6 +75,35 @@
       <div class="tree" id="probe-hits"></div>
     </section>
 
+    <!-- PINNED CONTEXT -->
+    <section class="view" data-view="pins" hidden>
+      <div class="view-head">Pinned context
+        <button class="mini" id="pin-add" title="Add a pin">＋</button>
+      </div>
+      <div class="pad muted small">
+        Stored outside the transcript, keyed by project folder, and re-applied on
+        every build. Rewinding the conversation re-homes it instead of losing it.
+      </div>
+      <div class="tree" id="pin-list"></div>
+      <div class="pad" id="pin-edit" hidden>
+        <input class="input wide" id="pin-label" placeholder="label">
+        <textarea class="input area" id="pin-text" rows="6" placeholder="context to keep in every build…"></textarea>
+        <div class="row gap">
+          <select class="input" id="pin-anchor">
+            <option value="last-user">anchor: last user turn</option>
+            <option value="first-user">anchor: first user turn</option>
+            <option value="last-block">anchor: last block</option>
+            <option value="block">anchor: a specific block</option>
+          </select>
+        </div>
+        <div class="row gap">
+          <button class="btn sm primary" id="pin-save">Save pin</button>
+          <button class="btn sm" id="pin-cancel">Cancel</button>
+          <button class="btn sm" id="pin-delete">Delete</button>
+        </div>
+      </div>
+    </section>
+
     <!-- CHAT -->
     <section class="view" data-view="chat" hidden>
       <div class="view-head">Resume the chat</div>
@@ -83,6 +113,10 @@
         <div class="row gap">
           <button class="btn sm primary" id="btn-send">Send</button>
           <label class="check small"><input type="checkbox" id="chat-retrace" checked> re-trace after</label>
+        </div>
+        <div class="muted small" style="margin-top:6px">
+          The turn is re-extracted into blocks as soon as it finishes, so you can
+          edit what it added.
         </div>
       </div>
       <div class="chatlog" id="chat-log"></div>
@@ -105,7 +139,7 @@
 
 </div>
 
-<section class="panel" id="panel">
+<section class="panel">
   <div class="panel-tabs">
     <button class="ptab selected" data-panel="terminal">Terminal</button>
     <button class="ptab" data-panel="flow">Flow</button>
@@ -136,6 +170,13 @@
     <pre class="term" id="output"></pre>
   </div>
 </section>
+
+<div class="confirmbar" id="confirmbar" hidden>
+  <span id="confirm-text"></span>
+  <div class="grow"></div>
+  <button class="btn sm primary" id="confirm-yes">Confirm</button>
+  <button class="btn sm" id="confirm-no">Cancel</button>
+</div>
 
 <footer class="statusbar">
   <span id="st-blocks">—</span>

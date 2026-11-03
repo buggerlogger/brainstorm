@@ -90,7 +90,10 @@ console.log(`brainstorm tests  ${ALL ? '(including end-to-end)' : '(fast; pass -
   if (bad) failed++;
 }
 
-// 2. flow reconstruction against a real transcript
+// 2. front-end wiring (no browser)
+run('ui wiring', [join(HERE, 'ui.test.mjs')]);
+
+// 3. flow reconstruction against a real transcript
 {
   const t = findRecordedTranscript();
   if (t) run('flow (recorded mode)', [join(HERE, 'flow.test.mjs'), t]);
@@ -100,7 +103,7 @@ console.log(`brainstorm tests  ${ALL ? '(including end-to-end)' : '(fast; pass -
   }
 }
 
-// 3. the HTTP API, against a server this runner starts and stops
+// 4. the HTTP API, against a server this runner starts and stops
 if (ALL) {
   process.stdout.write('\n──── api (starts an IDE server)\n');
   const t = findRecordedTranscript();
@@ -119,7 +122,7 @@ if (ALL) {
   }
 }
 
-// 4. the end-to-end skill swap: two real Claude sessions
+// 5. the end-to-end skill swap: two real Claude sessions
 if (ALL) run('skill swap (end to end)', [join(HERE, 'skillswap.test.mjs')]);
 
 console.log('\n════ summary');

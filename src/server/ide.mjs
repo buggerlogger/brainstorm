@@ -16,7 +16,7 @@
 
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { join, dirname, extname, resolve as pathResolve } from 'node:path';
+import { join, dirname, extname, basename, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -25,6 +25,7 @@ import { listProjects, resolveSession } from '../core/sessions.mjs';
 import { parseBlocks, writeBlocks, groupBlocks } from '../core/blocksmd.mjs';
 import { readTranscript, summarise } from '../core/transcript.mjs';
 import { traceFlow, probe, diffFlow } from '../core/flow.mjs';
+import { loadPins, savePins, newPin, applyPins, purgePin, rewindTo, ANCHORS } from '../core/pins.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = pathResolve(HERE, '..', '..');
@@ -54,6 +55,8 @@ const ws = {
   dirty: new Set(),   // block ids edited since the last build
   baseline: null,     // flow trace of the session as opened
   lastBuild: null,
+  pins: [],          // sticky context, loaded by cwd, re-applied on every build
+  pinReport: [],
   log: [],
 };
 
@@ -75,10 +78,18 @@ function engine(args, { timeout = 600000 } = {}) {
   return { code: r.status ?? 1, out };
 }
 
-function workDirFor(sessionId) {
+// ⛔ Takes the session ID, never whatever the caller passed. The UI sends the
+// full .jsonl PATH as `session` (it has one, and resolveSession accepts it), so
+// joining that under tmpdir produced
+//   C:\...\Temp\brainstorm-ide\C:\Users\...\<id>.jsonl
+// and every extract died with ENOENT on mkdir. Same class as the old
+// --install-to defect: a value used as a name after being used as a path.
+function workDirFor(idOrPath) {
   const base = join(tmpdir(), 'brainstorm-ide');
   mkdirSync(base, { recursive: true });
-  return join(base, sessionId);
+  const id = basename(String(idOrPath)).replace(/\.jsonl$/i, '');
+  if (!/^[A-Za-z0-9._-]{1,120}$/.test(id)) throw new Error(`refusing to build a work dir from ${JSON.stringify(idOrPath)}`);
+  return join(base, id);
 }
 
 function loadWorkspace(dir) {
@@ -94,6 +105,13 @@ function loadWorkspace(dir) {
   ws.header = header;
   ws.blocks = blocks;
   ws.dirty = new Set();
+  ws.pins = loadPins(config.cwd);
+  // Re-apply on open: a session rebuilt from a pinned one already carries the
+  // pin text in its blocks, and a fresh sibling session does not. Applying is
+  // idempotent, so doing it unconditionally is what keeps the two in step.
+  ws.pinReport = applyPins(ws.blocks, ws.pins);
+  const landed = ws.pinReport.filter((r) => r.applied).length;
+  if (ws.pins.length) logLine(`pins: ${landed}/${ws.pins.length} applied for ${config.cwd}`);
   ws.baseline = traceOf(config.source, config.tokens?.charsPerToken || 4);
   return ws;
 }
@@ -148,6 +166,11 @@ function stateView() {
       tokens: Math.round(chars / ratio),
       dirty: [...ws.dirty],
     },
+    pins: ws.pins.map((p) => {
+      const r = ws.pinReport.find((x) => x.id === p.id);
+      return { ...p, applied: !!r?.applied, blockApplied: r?.blockId ?? null, rehomed: !!r?.rehomed, reason: r?.reason || null };
+    }),
+    anchors: ANCHORS,
     groups: groups.map((g) => ({
       name: g.name,
       chars: g.chars,
@@ -203,7 +226,7 @@ const routes = {
     }
     if (!session) throw new Error('open needs { session } or { dir }');
     const { path } = resolveSession(session);
-    const out = workDirFor(session);
+    const out = workDirFor(path);
     const r = engine(['extract', '--session', path, '--dir', out]);
     if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
     loadWorkspace(out);
@@ -244,6 +267,10 @@ const routes = {
 
   'POST /api/build': (body) => {
     if (!ws.dir) throw new Error('no session open');
+    // Pins go in BEFORE the engine sees the blocks, every single build. That
+    // is the whole guarantee: rewind, rebuild, resume -- the pin is re-applied
+    // from its own store each time, so it cannot be edited or rewound away.
+    ws.pinReport = applyPins(ws.blocks, ws.pins);
     flushBlocks();
     const args = ['build', '--dir', ws.dir];
     if (body.newId) args.push('--new-id', String(body.newId));
@@ -262,6 +289,7 @@ const routes = {
       out: r.out,
       summary: parsed,
       diff: after && ws.baseline ? diffFlow(ws.baseline, after) : [],
+      pins: ws.pinReport,
     };
   },
 
@@ -337,6 +365,57 @@ const routes = {
     return engine(args);
   },
 
+  // --- sticky context -------------------------------------------------------
+
+  'POST /api/pin': (body) => {
+    if (!ws.config) throw new Error('no session open');
+    const { action } = body;
+    if (action === 'add') {
+      const pin = newPin({ text: body.text || '', anchor: body.anchor, blockId: body.blockId, label: body.label });
+      ws.pins.push(pin);
+    } else if (action === 'update') {
+      const pin = ws.pins.find((p) => p.id === body.id);
+      if (!pin) throw new Error(`no pin ${body.id}`);
+      if (typeof body.text === 'string') pin.text = body.text;
+      if (typeof body.label === 'string') pin.label = body.label;
+      if (typeof body.enabled === 'boolean') pin.enabled = body.enabled;
+      if (body.anchor) pin.anchor = body.anchor;
+      if (body.blockId !== undefined) pin.blockId = body.blockId;
+    } else if (action === 'remove') {
+      // Strip it from the blocks BEFORE forgetting it exists.
+      const gone = purgePin(ws.blocks, body.id);
+      logLine(`pin remove ${body.id}: stripped from ${gone} block(s)`);
+      ws.pins = ws.pins.filter((p) => p.id !== body.id);
+    } else {
+      throw new Error('pin needs action: add | update | remove');
+    }
+    savePins(ws.config.cwd, ws.pins);
+    ws.pinReport = applyPins(ws.blocks, ws.pins);
+    flushBlocks();
+    logLine(`pin ${action} -> ${ws.pins.length} pin(s) for ${ws.config.cwd}`);
+    return { ok: true, pins: ws.pins, report: ws.pinReport, state: stateView() };
+  },
+
+  // --- rewind ---------------------------------------------------------------
+
+  'POST /api/rewind': (body) => {
+    if (!ws.dir) throw new Error('no session open');
+    const id = Number(body.blockId);
+    const res = rewindTo(ws.blocks, id);
+    for (const dropped of res.dropped) ws.dirty.add(dropped);
+    // Re-apply AFTER the drop so a pin whose anchor just vanished re-homes
+    // onto a block that survived instead of disappearing with it.
+    ws.pinReport = applyPins(ws.blocks, ws.pins);
+    flushBlocks();
+    logLine(`rewind to block ${id}: dropped ${res.dropped.length}, pins re-applied`);
+    return {
+      ok: true,
+      ...res,
+      pins: ws.pinReport,
+      state: stateView(),
+    };
+  },
+
   'POST /api/send': async (body) => {
     const msg = String(body.message || '').trim();
     if (!msg) throw new Error('send needs { message }');
@@ -346,7 +425,28 @@ const routes = {
     logLine(`resume ${sessionId} <- ${JSON.stringify(msg.slice(0, 60))}`);
     const r = await run('claude', ['-p', '--resume', sessionId, msg, '--permission-mode', 'bypassPermissions'], cwd);
     logLine(`resume exit ${r.code}`);
-    return { ...r, sessionId, cwd };
+
+    // Re-open the session so the turn that just happened becomes editable
+    // blocks immediately. `claude --resume` appends to the same transcript, so
+    // re-extracting is what makes "every action shows its context" true rather
+    // than a claim -- without it the tree still shows the pre-send session.
+    let reopened = null;
+    if (r.code === 0 && body.reopen !== false) {
+      try {
+        const { path } = resolveSession(sessionId);
+        const out = workDirFor(path);
+        const ex = engine(['extract', '--session', path, '--dir', out]);
+        if (ex.code === 0) {
+          loadWorkspace(out);
+          reopened = stateView();
+        } else {
+          logLine(`re-extract after send failed: ${ex.out.split('\n')[0]}`);
+        }
+      } catch (err) {
+        logLine(`re-extract after send failed: ${err.message}`);
+      }
+    }
+    return { ...r, sessionId, cwd, state: reopened };
   },
 };
 
@@ -426,7 +526,7 @@ export function startIde({ port = 7788, dir = null, session = null } = {}) {
   if (dir) loadWorkspace(dir);
   else if (session) {
     const { path } = resolveSession(session);
-    const out = workDirFor(session);
+    const out = workDirFor(path);
     const r = engine(['extract', '--session', path, '--dir', out]);
     if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
     loadWorkspace(out);

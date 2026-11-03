@@ -262,6 +262,16 @@ body {
 .msg .body { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; margin-top: 2px; }
 .msg.me .body { color: var(--blue); }
 
+.confirmbar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 34px; z-index: 50;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-elev); border: 1px solid var(--focus); border-radius: 4px;
+  padding: 8px 12px; font-size: 12px; max-width: 70vw;
+  box-shadow: 0 6px 24px rgba(0,0,0,.45);
+}
+.confirmbar[hidden] { display: none; }
+.confirmbar #confirm-text { white-space: pre-wrap; }
+
 /* ---------- status bar ---------- */
 .statusbar {
   display: flex; align-items: center; gap: 14px;

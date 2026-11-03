@@ -28,6 +28,7 @@ const S = {
   probeAt: -1,
   panel: 'terminal',
   view: 'explorer',
+  editingPin: null,   // pin id being edited, or 'new'
 };
 
 /* ------------------------------------------------------------------ api --- */
@@ -77,13 +78,17 @@ async function loadProjects() {
   }
 }
 
-function node({ depth = 0, twisty = '', icon = '', iconCls = '', label, meta = '', cls = '', onClick, onAux }) {
+function node({ depth = 0, twisty = '', icon = '', iconCls = '', label, meta = '', cls = '', onClick, onAux, onMenu }) {
   const n = el('div', `node d${depth} ${cls}`);
   n.appendChild(el('span', 'tw', twisty));
   if (icon) n.appendChild(el('span', `ico ${iconCls}`, icon));
   n.appendChild(el('span', 'lbl', label));
   if (meta !== '') n.appendChild(el('span', 'meta', meta));
   if (onClick) n.addEventListener('click', onClick);
+  if (onMenu) {
+    n.title = 'right-click: rewind to here';
+    n.addEventListener('contextmenu', (e) => { e.preventDefault(); onMenu(); });
+  }
   if (onAux) {
     const eye = el('span', 'eye', '◉');
     eye.title = 'include / drop this block';
@@ -123,6 +128,7 @@ function renderTree() {
           cls: `${b.keep ? '' : 'dropped'} ${b.dirty ? 'dirty' : ''} ${S.active === `block:${b.id}` ? 'selected' : ''}`,
           onClick: () => openBlock(b.id),
           onAux: () => toggleKeep(b.id, !b.keep),
+          onMenu: () => rewind(b.id, b.title),
         }));
       }
     }
@@ -270,7 +276,7 @@ function renderStatus() {
   $('#title-dirty').textContent = `${d} unsaved`;
 }
 
-function renderAll() { renderTree(); renderTabs(); renderEditor(); renderStatus(); }
+function renderAll() { renderTree(); renderTabs(); renderEditor(); renderStatus(); renderPins(); }
 
 /* --------------------------------------------------------------- editing --- */
 
@@ -547,6 +553,134 @@ function probeNext(dir) {
   status(`hit ${S.probeAt + 1}/${S.probeHits.length} · ${h.path}`);
 }
 
+/* ------------------------------------------------------------- rewind/pins --- */
+
+// askConfirm is a PROMISE, not window.confirm. A native dialog halts the
+// document: a rewind prompt left the IDE unable to even reload until someone
+// clicked it, and no script could drive the page past that point.
+function askConfirm(text) {
+  return new Promise((resolve) => {
+    const bar = $('#confirmbar');
+    $('#confirm-text').textContent = text;
+    bar.hidden = false;
+    const done = (v) => {
+      bar.hidden = true;
+      $('#confirm-yes').onclick = null;
+      $('#confirm-no').onclick = null;
+      document.removeEventListener('keydown', onKey, true);
+      resolve(v);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); done(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); done(true); }
+    };
+    $('#confirm-yes').onclick = () => done(true);
+    $('#confirm-no').onclick = () => done(false);
+    document.addEventListener('keydown', onKey, true);
+  });
+}
+
+async function rewind(blockId, title) {
+  const ok = await askConfirm(
+    'Rewind to block #' + blockId + '?  ' + title + '  —  every block after it is '
+    + 'dropped from the context. Pinned context re-homes onto a block that survives.',
+  );
+  if (!ok) return;
+  try {
+    const r = await api('/api/rewind', { blockId });
+    S.state = r.state;
+    renderAll();
+    termWrite('$ rewind to #' + blockId + '  -> dropped ' + r.dropped.length + ' block(s)', 'ok');
+    const rehomed = (r.pins || []).filter((x) => x.applied);
+    if (rehomed.length) {
+      termWrite('  ' + rehomed.length + ' pin(s) re-applied: '
+        + rehomed.map((x) => x.label + ' -> #' + x.blockId).join(', '), 'dim');
+    }
+    status('rewound: ' + r.dropped.length + ' block(s) dropped');
+  } catch (err) { status(err.message, 'err'); termWrite(err.message, 'err'); }
+}
+
+function renderPins() {
+  const box = $('#pin-list');
+  if (!box) return;
+  const pins = (S.state && S.state.pins) || [];
+  const frag = document.createDocumentFragment();
+  if (!pins.length) frag.appendChild(el('div', 'muted pad small', 'No pins. Use + to add context that survives rewind.'));
+  for (const p of pins) {
+    const where = p.applied ? ('#' + p.blockApplied + (p.rehomed ? ' (re-homed)' : '')) : (p.reason || 'not applied');
+    frag.appendChild(node({
+      depth: 0,
+      icon: p.enabled ? (p.applied ? '◉' : '◌') : '○',
+      iconCls: p.applied ? 'assistant' : 'thinking',
+      label: p.label,
+      meta: where,
+      cls: S.editingPin === p.id ? 'selected' : '',
+      onClick: () => editPin(p.id),
+      onAux: () => togglePin(p),
+    }));
+  }
+  box.replaceChildren(frag);
+}
+
+function editPin(id) {
+  const p = ((S.state && S.state.pins) || []).find((x) => x.id === id);
+  S.editingPin = id;
+  $('#pin-edit').hidden = false;
+  $('#pin-label').value = p ? p.label : '';
+  $('#pin-text').value = p ? p.text : '';
+  $('#pin-anchor').value = p ? p.anchor : 'last-user';
+  $('#pin-delete').hidden = !p;
+  renderPins();
+  $('#pin-text').focus();
+}
+
+async function togglePin(p) {
+  try {
+    const r = await api('/api/pin', { action: 'update', id: p.id, enabled: !p.enabled });
+    S.state = r.state;
+    renderAll();
+    status('pin ' + p.label + (p.enabled ? ' disabled' : ' enabled'));
+  } catch (err) { status(err.message, 'err'); }
+}
+
+async function savePin() {
+  const text = $('#pin-text').value;
+  const label = $('#pin-label').value.trim();
+  const anchor = $('#pin-anchor').value;
+  const at = activeTab();
+  const blockId = anchor === 'block' && at && at.kind === 'block' ? at.id : null;
+  if (anchor === 'block' && blockId === null) {
+    status('open the block you want to anchor to first', 'err');
+    return;
+  }
+  try {
+    const body = S.editingPin === 'new'
+      ? { action: 'add', text, label, anchor, blockId }
+      : { action: 'update', id: S.editingPin, text, label, anchor, blockId };
+    const r = await api('/api/pin', body);
+    S.state = r.state;
+    S.editingPin = null;
+    $('#pin-edit').hidden = true;
+    renderAll();
+    const applied = (r.report || []).filter((x) => x.applied).length;
+    termWrite('$ pin saved  -> ' + applied + '/' + r.pins.length + ' applied', 'ok');
+    status(r.pins.length + ' pin(s), ' + applied + ' applied');
+  } catch (err) { status(err.message, 'err'); termWrite(err.message, 'err'); }
+}
+
+async function deletePin() {
+  if (!S.editingPin || S.editingPin === 'new') return;
+  if (!await askConfirm('Delete this pin? Its text is stripped from every block.')) return;
+  try {
+    const r = await api('/api/pin', { action: 'remove', id: S.editingPin });
+    S.state = r.state;
+    S.editingPin = null;
+    $('#pin-edit').hidden = true;
+    renderAll();
+    termWrite('$ pin removed', 'ok');
+  } catch (err) { status(err.message, 'err'); }
+}
+
 /* ------------------------------------------------------------------ chat --- */
 
 async function send() {
@@ -560,6 +694,15 @@ async function send() {
     const r = await api('/api/send', { message: msg });
     addMsg(`claude (${r.sessionId.slice(0, 8)})`, r.out.trim() || '(no output)');
     termWrite(`$ claude -p --resume ${r.sessionId}  -> exit ${r.code}`, r.code === 0 ? 'ok' : 'err');
+    // The server re-extracts after the turn, so the new messages are already
+    // editable blocks. Showing them at once is the point: every action's
+    // context lands in the tree where it can be changed.
+    if (r.state) {
+      S.state = r.state;
+      S.tabs = S.tabs.filter((t) => t.kind !== 'block');
+      renderAll();
+      termWrite('  context refreshed: ' + r.state.totals.blocks + ' blocks', 'dim');
+    }
     status(`resume exit ${r.code}`);
     if ($('#chat-retrace').checked) await trace($('#flow-of').value);
   } catch (err) {
@@ -615,6 +758,10 @@ function selectPanel(p) {
 document.querySelectorAll('.act').forEach((b) => b.addEventListener('click', () => selectView(b.dataset.view)));
 document.querySelectorAll('.ptab').forEach((b) => b.addEventListener('click', () => selectPanel(b.dataset.panel)));
 
+$('#pin-add').addEventListener('click', () => editPin('new'));
+$('#pin-save').addEventListener('click', savePin);
+$('#pin-cancel').addEventListener('click', () => { S.editingPin = null; $('#pin-edit').hidden = true; renderPins(); });
+$('#pin-delete').addEventListener('click', deletePin);
 $('#btn-refresh').addEventListener('click', loadProjects);
 $('#btn-save').addEventListener('click', save);
 $('#btn-build').addEventListener('click', () => build(false));
