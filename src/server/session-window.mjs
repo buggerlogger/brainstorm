@@ -63,15 +63,32 @@ function runnerScript(tag) {
     '  $c = Read-Ctl',
     '  if ($null -eq $c -or $c.stop) { Note "stop requested"; break }',
     '  $exe = if ($c.claude) { $c.claude } else { "claude" }',
-    '  $cmd = Get-Command $exe -ErrorAction SilentlyContinue',
+    // ⛔ -CommandType Application. A bare Get-Command resolves npm's `claude` to
+    // claude.ps1 FIRST (an ExternalScript), and Start-Process on a .ps1 does
+    // not run it in this console -- it opens it by file association. Save &
+    // Resume then "restarted" nothing: claude never came back. MEASURED on the
+    // machine this broke on: ExternalScript claude.ps1, then Application
+    // claude.cmd, then Application claude. The stub test passed only because
+    // its fake claude was a .cmd.
+    '  $cmd = Get-Command $exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1',
+    '  $viaPs1 = $false',
+    '  if ($null -eq $cmd) {',
+    '    $cmd = Get-Command $exe -CommandType ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1',
+    '    $viaPs1 = $null -ne $cmd',
+    '  }',
     '  if ($null -eq $cmd) { Write-Host "brainstorm: cannot find $exe on PATH" -ForegroundColor Red; Note "missing $exe"; break }',
     '  $argv = @("--resume", $c.resume) + @($c.args | Where-Object { $_ })',
     '  Write-Host ""',
     '  Write-Host ("brainstorm: claude --resume " + $c.resume) -ForegroundColor Cyan',
-    '  Note ("start " + $cmd.Source + " " + ($argv -join " "))',
+    '  Note ("start " + $cmd.CommandType + " " + $cmd.Source + " " + ($argv -join " "))',
     // Start-Process -NoNewWindow shares THIS console, so claude gets the real
-    // TTY; -PassThru gives the pid to record; -Wait blocks until it ends.
-    '  $p = Start-Process -FilePath $cmd.Source -ArgumentList $argv -NoNewWindow -PassThru',
+    // TTY; -PassThru gives the pid to record. A script that is the only option
+    // runs through powershell -File, which is how a .ps1 actually executes.
+    '  if ($viaPs1) {',
+    '    $p = Start-Process -FilePath "powershell.exe" -ArgumentList (@("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $cmd.Source) + $argv) -NoNewWindow -PassThru',
+    '  } else {',
+    '    $p = Start-Process -FilePath $cmd.Source -ArgumentList $argv -NoNewWindow -PassThru',
+    '  }',
     '  Set-Content -LiteralPath $pidFile -Value $p.Id',
     '  $p.WaitForExit()',
     '  Remove-Item -LiteralPath $pidFile -ErrorAction SilentlyContinue',

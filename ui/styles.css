@@ -432,7 +432,8 @@ body.gated .titlebar, body.gated .shell, body.gated .panel, body.gated .statusba
 .settings .opt input[type="text"], .settings .opt input[type="number"], .settings .opt select { width: 100%; margin-top: 4px; }
 
 /* ---------- follow ---------- */
-.chip.follow { background: var(--green); }
+.chip.rec { background: #c42b1c; color: #fff; cursor: pointer; }
+.chip.rec:hover { background: #e03b2b; }
 .node.flash { animation: flash .9s ease-out; }
 @keyframes flash { from { background: rgba(78, 201, 176, .45); } to { background: transparent; } }
 .activity .grow { flex: 1; }

@@ -320,16 +320,28 @@
     }
   }
 
+  // Open a hit AT the hit. Three things used to defeat that: the editor opened
+  // at line 1; a frame hit re-traced the whole session first (seconds, on a big
+  // one); and jumping switched the bottom panel to Flow, so the results list
+  // you were clicking through vanished.
   async function openHit(h) {
-    if (h.where === 'block') { openBlock(h.blockId); return; }
-    const value = h.agent === 'main' ? 'source' : `agent:${h.agent}`;
-    if (h.agent !== 'main') ensureFlowOption(value, `↳ ${String(h.agentLabel).slice(0, 40)}`);
-    if ($('#flow-of').value !== value || !S.trace) {
-      $('#flow-of').value = value;
-      await trace(value, { quiet: true });
+    const q = $('#strings-q').value;
+    const opts = { caseSensitive: $('#strings-case').checked, regex: $('#strings-regex').checked };
+    if (h.where === 'block') {
+      await openBlock(h.blockId);
+    } else {
+      const value = h.agent === 'main' ? 'source' : `agent:${h.agent}`;
+      if (h.agent !== 'main') ensureFlowOption(value, `↳ ${String(h.agentLabel).slice(0, 40)}`);
+      if ($('#flow-of').value !== value) {
+        $('#flow-of').value = value;
+        S.trace = null;          // the tree belongs to the other source; do not show it as this one
+      }
+      S.expanded.add(`c:${h.call}`);
+      const f = await jumpTo(h.call, h.frame, { keepPanel: true });
+      if (!f) return;
     }
-    S.expanded.add(`c:${h.call}`);
-    jumpTo(h.call, h.frame);
+    if (!revealInEditor(q, opts)) status('opened; the match is not in the visible text (it may be past the shown part)');
+    else status(`${h.where === 'block' ? `block #${h.blockId}` : `call ${h.call} · ${h.path}`} — match selected`);
   }
 
   $('#strings-go').addEventListener('click', runStrings);

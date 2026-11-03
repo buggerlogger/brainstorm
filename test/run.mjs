@@ -114,6 +114,10 @@ run('zip + export', 'export.test.mjs');
   else { console.log('\n──── flow\n  SKIP  no transcript with api-request records on this machine'); results.push({ label: 'flow (skipped)', ok: true }); }
 }
 
+// recorder: replayed transcripts, so it needs no claude and no network
+run("recorder: live calls match the transcript", "recorder.test.mjs");
+run("recorder: double start + overlapping ticks", "recorder-concurrency.test.mjs");
+
 // 3. everything that needs a server
 if (ALL) {
   const srv = await startServer(process.execPath, [join(ROOT, 'bin', 'app.mjs'), '--no-window', '--port', String(PORT)], PORT);
@@ -129,6 +133,7 @@ if (ALL) {
   }
   run('presence: background window keeps the app alive', 'presence.test.mjs');
   run('session window switches in place', 'window.test.mjs');
+  run('the REAL claude in the session window', 'real-claude-window.test.mjs');
   run('skill swap (two real claude sessions)', 'skillswap.test.mjs');
 }
 

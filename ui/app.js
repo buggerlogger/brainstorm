@@ -431,7 +431,14 @@ function renderFlowTree() {
       depth: 0, twisty: open ? '▾' : '▸', icon: '▶',
       label: `call ${ci}  L${c.line}`,
       meta: `~${fmt(c.totals.tokens)} tok`,
-      onClick: () => { toggle(key); renderFlowTree(); },
+      // Clicking a call OPENS it: expand and land on its first frame. It used
+      // to only expand or collapse, so there was no way to get into a call
+      // from its node. The ▸/▾ twisty still just toggles.
+      onClick: (e) => {
+        if (e && e.target && e.target.classList.contains('tw')) { toggle(key); renderFlowTree(); return; }
+        S.expanded.add(key);
+        jumpTo(ci, 0);
+      },
       data: { call: ci },
     }));
     if (!open) return;
@@ -461,7 +468,41 @@ function frameGlyph(kind) {
   return kind === 'system' ? '⚙' : kind === 'tool' ? 'ƒ' : kind === 'tool_call' ? '→' : kind === 'tool_result' ? '↩' : '▸';
 }
 
-async function jumpTo(ci, fi) {
+// Put the editor ON a piece of text: select it and scroll it into view.
+// Opening a block or a frame used to leave the editor at line 1, so clicking a
+// search hit deep inside a long frame looked like it had not jumped at all.
+function revealInEditor(needle, { caseSensitive = false, regex = false } = {}) {
+  const ed = $('#editor');
+  const text = ed.value;
+  if (!needle || !text) return false;
+  let at = -1;
+  let len = 0;
+  if (regex) {
+    try {
+      const m = new RegExp(needle, caseSensitive ? '' : 'i').exec(text);
+      if (m) { at = m.index; len = m[0].length; }
+    } catch { /* invalid pattern: nothing to reveal */ }
+  } else {
+    at = (caseSensitive ? text : text.toLowerCase()).indexOf(caseSensitive ? needle : needle.toLowerCase());
+    len = needle.length;
+  }
+  if (at < 0) return false;
+  ed.focus({ preventScroll: true });
+  ed.setSelectionRange(at, at + len);
+  const cs = getComputedStyle(ed);
+  const lineH = parseFloat(cs.lineHeight) || 18;
+  const lineNo = text.slice(0, at).split('\n').length - 1;
+  ed.scrollTop = Math.max(0, (lineNo - 4) * lineH);
+  if (!ed.classList.contains('wrap')) {
+    const col = at - (text.lastIndexOf('\n', at - 1) + 1);
+    const charW = (parseFloat(cs.fontSize) || 12) * 0.6;   // monospace advance
+    ed.scrollLeft = Math.max(0, col * charW - ed.clientWidth / 3);
+  }
+  renderGutter();
+  return true;
+}
+
+async function jumpTo(ci, fi, opts = {}) {
   S.cursor = { call: ci, frame: fi };
   const of = $('#flow-of').value;
   try {
@@ -478,13 +519,14 @@ async function jumpTo(ci, fi) {
     }
     S.active = key;
     $('#st-frame').textContent = `frame ${ci}/${fi} · ${f.path}`;
-    renderFrameDetail(f, ci, fi);
+    renderFrameDetail(f, ci, fi, opts);
     renderAll();
     renderFlowTree();
-  } catch (err) { status(err.message, 'err'); }
+    return f;
+  } catch (err) { status(err.message, 'err'); return null; }
 }
 
-function renderFrameDetail(f, ci, fi) {
+function renderFrameDetail(f, ci, fi, opts = {}) {
   const box = $('#flow-detail');
   const dl = el('dl', 'kv');
   const put = (k, v) => { dl.appendChild(el('dt', '', k)); dl.appendChild(el('dd', '', String(v))); };
@@ -501,7 +543,9 @@ function renderFrameDetail(f, ci, fi) {
   const readers = el('div', 'readers');
   readers.id = 'frame-readers';
   box.replaceChildren(dl, readers, pre);
-  if (!S.following) selectPanel('flow');
+  // Do not yank the bottom panel away from whatever sent us here: a click on a
+  // Strings hit used to replace the results list with the Flow panel.
+  if (!S.following && !opts.keepPanel) selectPanel('flow');
   window.brainstorm?.onFrame?.(f, ci, fi);
 }
 
@@ -845,12 +889,20 @@ function liveRender(events) {
 async function attachLive(e) {
   if (!e.session) return;
   try {
-    status('attaching to ' + e.session.slice(0, 8) + '…');
-    const r = await api('/api/live', { action: 'attach', session: e.session });
-    if (r.state) { S.state = r.state; renderAll(); }
-    await trace('source', { quiet: true });
-    if (typeof e.call === 'number') jumpTo(e.call, typeof e.frame === 'number' ? e.frame : 0);
-    status('attached to ' + e.session.slice(0, 8));
+    // Already the open session: just go there. Re-extracting and re-tracing
+    // the whole session first is what made clicking a call feel dead.
+    const here = S.state && S.state.config && S.state.config.sessionId === e.session;
+    if (!here) {
+      status('attaching to ' + e.session.slice(0, 8) + '…');
+      const r = await api('/api/live', { action: 'attach', session: e.session });
+      if (r.state) { S.state = r.state; renderAll(); }
+    }
+    $('#flow-of').value = 'source';
+    if (typeof e.call === 'number') {
+      S.expanded.add('c:' + e.call);
+      await jumpTo(e.call, typeof e.frame === 'number' ? e.frame : 0, { keepPanel: true });
+    }
+    status((here ? 'call ' + e.call : 'attached to ' + e.session.slice(0, 8)));
   } catch (err) { status(err.message, 'err'); }
 }
 

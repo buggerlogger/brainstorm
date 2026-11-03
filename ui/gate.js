@@ -16,6 +16,7 @@
 (() => {
   const B = (window.brainstorm = window.brainstorm || {});
   let rows = [];
+  let rowsFor = null;   // the query the rows on screen answer
   let sel = 0;
   let timer = null;
   let seq = 0;
@@ -69,6 +70,7 @@
       list = [...recent.map((x) => ({ ...x, _sec: 'Recent' })), ...rest.map((x) => ({ ...x, _sec: 'All sessions' }))];
     }
     rows = list;
+    rowsFor = q;
     sel = 0;
     render();
   }
@@ -154,7 +156,23 @@
   $('#gate-q').addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(rows.length - 1, sel + 1); paintSel(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel - 1); paintSel(); }
-    else if (e.key === 'Enter') { e.preventDefault(); choose(); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      // ⛔ Search waits 120 ms after the last keystroke. Pressing Enter inside
+      // that window used to open the selected row of the PREVIOUS list --
+      // MEASURED: typing 19f1949b and pressing Enter opened e87c0c1c, the top
+      // "Recent" row of the empty-query list. Enter acts on results for what
+      // is in the box now: if those are not on screen yet, search first.
+      const q = e.target.value;
+      if (rowsFor !== q.trim().toLowerCase() && rowsFor !== q) {
+        clearTimeout(timer);
+        // and only if that search actually answered: a failed one leaves the
+        // old rows up, which are exactly the wrong thing to open
+        search(q).then(() => { if (rowsFor === q) choose(); });
+      } else {
+        choose();
+      }
+    }
     else if (e.key === 'Escape') { e.preventDefault(); hide(); }
   });
 

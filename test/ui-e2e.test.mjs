@@ -157,7 +157,12 @@ try {
     const s=r.results.find(x=>x.bytes>20000&&x.bytes<3e6&&!x.duplicate); return s?{id:s.id,path:s.path}:null })`);
   check(!!pick, 'found a session to open', pick?.id);
   await cdp.eval(`(()=>{const q=document.querySelector('#gate-q'); q.value=${JSON.stringify(pick.id.slice(0, 8))}; q.dispatchEvent(new Event('input'));})()`);
-  check(await waitFor(cdp, `[...document.querySelectorAll('#gate-list .gate-row .id')].some(n=>n.textContent===${JSON.stringify(pick.id.slice(0, 8))})`), 'typing an id prefix finds it');
+  // Wait for the QUERY's results, not just any list containing the row: the
+  // empty-query list contains it too, and waiting on that is what hid a real
+  // bug -- Enter opened the top "Recent" row instead of the typed id.
+  const prefix = JSON.stringify(pick.id.slice(0, 8));
+  check(await waitFor(cdp, `(()=>{const ids=[...document.querySelectorAll('#gate-list .gate-row .id')].map(n=>n.textContent);
+    return ids.length>0 && ids.every(t=>t===${prefix}) })()`), 'typing an id prefix finds it (and only it)');
   check(await cdp.eval(`document.querySelector('#gate-list .gate-row.sel .id')?.textContent === ${JSON.stringify(pick.id.slice(0, 8))}`), 'and ranks it first');
   // no terminal window in a test
   await cdp.eval(`document.querySelector('#gate-console').checked = false`);
@@ -210,10 +215,11 @@ try {
   await cdp.eval(`document.querySelector('.act[data-view="settings"]').click()`);
   check(await waitFor(cdp, `document.querySelectorAll('#settings-form [data-key]').length > 10`), 'the settings form renders from the schema');
 
-  step('debugger + follow');
-  await cdp.eval(`document.querySelector('.act[data-view="debug"]').click()`);
-  check(await waitFor(cdp, `S.trace && S.trace.calls.length > 0`, 20000), 'the session was traced on open');
-  check(await cdp.eval(`!!document.querySelector('#opt-follow')`), 'the follow toggle exists');
+  step('recording view');
+  await cdp.eval(`document.querySelector('.act[data-view="recording"]').click()`);
+  check(await cdp.eval(`!document.querySelector('.view[data-view="recording"]').hidden`), 'the Recording view opens');
+  check(await cdp.eval(`!!document.querySelector('#rec-toggle') && !!document.querySelector('#rec-autojump')`), 'it has record and auto-jump controls');
+  check(await waitFor(cdp, `/recording|not recording|stopped/.test(document.querySelector('#rec-status').textContent)`, 10000), 'it reports its state', await cdp.eval(`document.querySelector('#rec-status').textContent`));
 
   if (SHOT) {
     await cdp.eval(`document.querySelector('.act[data-view="explorer"]').click()`);

@@ -38,6 +38,7 @@ import { traceFlow, probe, diffFlow } from '../core/flow.mjs';
 import { loadPins, savePins, newPin, applyPins, purgePin, rewindTo, ANCHORS } from '../core/pins.mjs';
 import { Shell, SHELLS, DEFAULT_SHELL } from './shell.mjs';
 import { SessionWatcher } from '../core/watch.mjs';
+import { Recorder } from '../core/recorder.mjs';
 import { openConsole, availableConsoles } from './console.mjs';
 
 // Paths and the engine command come from runtime.mjs, which knows whether
@@ -78,6 +79,38 @@ const VERBS = new Set(['list', 'extract', 'status', 'build', 'verify', 'help', '
 let shell = null;
 let watcher = null;
 
+// The live recorder: one per server, following whichever session is open.
+// It reads only what claude appends, so it never replays history and never
+// re-traces a whole file -- the old follow mode re-traced everything on every
+// event and stepped through old messages one by one.
+let recorder = null;
+function ensureRecorder() {
+  if (!recorder) {
+    recorder = new Recorder({
+      onEvent: (ev) => {
+        if (ev.type === 'started') logLine(`recording ${ev.session.slice(0, 8)} (${ev.mode})`);
+        else if (ev.type === 'switched') logLine(`recording switched to ${ev.session.slice(0, 8)}`);
+        else if (ev.type === 'error') logLine(`recorder: ${ev.message}`);
+      },
+    });
+  }
+  return recorder;
+}
+
+// Start recording a transcript, live from its current end. Errors are logged,
+// never thrown into the request that opened a session.
+async function recordFile(file) {
+  if (!file || !existsSync(file)) return null;
+  const r = ensureRecorder();
+  r.projectDir = dirname(file);
+  try {
+    await r.start(file);
+  } catch (err) {
+    logLine(`recorder failed to start: ${err.message}`);
+  }
+  return r;
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -111,7 +144,7 @@ const logLine = (s) => {
   return line;
 };
 
-function engine(args, { timeout = 600000 } = {}) {
+function engineSync(args, { timeout = 600000 } = {}) {
   const [exe, argv] = engineCommand(args);
   const r = spawnSync(exe, argv, {
     encoding: 'utf8',
@@ -124,6 +157,39 @@ function engine(args, { timeout = 600000 } = {}) {
   const out = `${r.stdout || ''}${r.stderr || ''}`;
   logLine(`ctx ${args.join(' ')}  -> exit ${r.status ?? 'null'}`);
   return { code: r.status ?? 1, out };
+}
+
+// ⛔ The engine runs ASYNCHRONOUSLY. Every call used to be spawnSync, which
+// freezes the whole server for its duration -- no presence, no polling, no
+// other request -- and inside the exe one extract takes ~2 s. Save & Resume is
+// a build plus an extract, so the app froze for seconds at a time and looked
+// broken. Only startup preloading still uses engineSync.
+function engine(args, { timeout = 600000 } = {}) {
+  const [exe, argv] = engineCommand(args);
+  return new Promise((resolve) => {
+    const child = spawn(exe, argv, { windowsHide: true });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    const t = setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, timeout);
+    child.on('error', (err) => { clearTimeout(t); resolve({ code: 1, out: `${out}\n${err.message}` }); });
+    child.on('close', (code) => {
+      clearTimeout(t);
+      logLine(`ctx ${args.join(' ')}  -> exit ${code ?? 'null'}`);
+      resolve({ code: code ?? 1, out });
+    });
+  });
+}
+
+const DIFF_MAX_BYTES = 8 * 1024 * 1024;
+
+// One build at a time. With the engine async, a second click on Save & Resume
+// during a build would otherwise start a second build on the same folder.
+let busy = null;
+async function exclusive(what, fn) {
+  if (busy) throw new Error(`busy: ${busy} is still running`);
+  busy = what;
+  try { return await fn(); } finally { busy = null; }
 }
 
 // ⛔ Takes the session ID, never whatever the caller passed. The UI sends the
@@ -160,9 +226,12 @@ function loadWorkspace(dir) {
   ws.pinReport = applyPins(ws.blocks, ws.pins);
   const landed = ws.pinReport.filter((r) => r.applied).length;
   if (ws.pins.length) logLine(`pins: ${landed}/${ws.pins.length} applied for ${config.cwd}`);
-  ws.baseline = traceOf(config.source, config.tokens?.charsPerToken || 4);
+  // No eager full trace here. It used to be computed on every open and took
+  // 17 s on a 44 MB session, blocking the server; nothing needed it at open.
+  ws.baseline = null;
   // Point the live watcher and the shell at this project.
   ensureWatcher(config.cwd, config.tokens?.charsPerToken || 4);
+  if (loadSettings().autoRecord !== false) recordFile(config.source);
   return ws;
 }
 
@@ -266,12 +335,11 @@ function ensureWatcher(cwd, ratio) {
         // Auto-attach is opt-in. Switching the editor out from under someone
         // mid-edit because a background session happened to start is the kind
         // of helpfulness that loses work.
-        if (watcher.autoAttach && !ws.dirty.size) {
-          try {
-            const out = workDirFor(ev.file);
-            const r = engine(['extract', '--session', ev.file, '--dir', out]);
-            if (r.code === 0) { loadWorkspace(out); logLine(`auto-attached ${ev.session.slice(0, 8)}`); }
-          } catch (err) { logLine(`auto-attach failed: ${err.message}`); }
+        if (watcher.autoAttach && !ws.dirty.size && !busy) {
+          const out = workDirFor(ev.file);
+          engine(['extract', '--session', ev.file, '--dir', out])
+            .then((r) => { if (r.code === 0 && !ws.dirty.size) { loadWorkspace(out); logLine(`auto-attached ${ev.session.slice(0, 8)}`); } })
+            .catch((err) => logLine(`auto-attach failed: ${err.message}`));
         } else if (watcher.autoAttach) {
           logLine(`auto-attach skipped: ${ws.dirty.size} unsaved edit(s)`);
         }
@@ -499,12 +567,12 @@ const routes = {
   // Save & Resume: the whole loop in one call.
   //   pins -> BLOCKS.md -> build --install -> switch the window to the new id
   //   -> reopen the editor on the session that is now running.
-  'POST /api/save-resume': (body) => {
+  'POST /api/save-resume': (body) => exclusive('Save & Resume', async () => {
     if (!ws.dir) throw new Error('no session open');
     const settings = loadSettings();
     ws.pinReport = applyPins(ws.blocks, ws.pins);
     flushBlocks();
-    const r = engine(['build', '--dir', ws.dir, '--install']);
+    const r = await engine(['build', '--dir', ws.dir, '--install']);
     const parsed = parseBuild(r.out);
     if (r.code !== 0 || !parsed.newId || !parsed.installed) {
       return { ok: false, stage: 'build', out: r.out, summary: parsed };
@@ -520,11 +588,35 @@ const routes = {
     }
     // Reopen on the NEW session so the tree is the context that is now live.
     const out = workDirFor(parsed.installed);
-    const ex = engine(['extract', '--session', parsed.installed, '--dir', out]);
+    const ex = await engine(['extract', '--session', parsed.installed, '--dir', out]);
     if (ex.code === 0) loadWorkspace(out);
     rememberRecent({ id: parsed.newId, cwd, path: parsed.installed });
+    // claude now runs on the installed session; record it from its end, so
+    // what shows is what happens next -- not the history it was built from.
+    await recordFile(parsed.installed);
     logLine(`save & resume -> ${parsed.newId}${win ? ` in window ${win.tag}${win.reused ? ' (same window)' : ' (new window)'}` : ''}`);
     return { ok: true, summary: parsed, out: r.out, window: win, state: stateView() };
+  }),
+
+  // --- live recording ------------------------------------------------------
+
+  'GET /api/record': (body, url) => {
+    if (!recorder) return { recording: false, status: 'idle', steps: [], frames: [], seq: 0 };
+    return recorder.since(Number(url.searchParams.get('since') || 0));
+  },
+
+  'POST /api/record': async (body) => {
+    const action = body.action || 'start';
+    if (action === 'start') {
+      const file = ws.config?.source;
+      if (!file) throw new Error('open a session first');
+      await recordFile(file);
+      return recorder.since(0);
+    }
+    if (!recorder) return { recording: false, status: 'idle', steps: [], frames: [] };
+    if (action === 'stop') { recorder.stop(); return recorder.since(0); }
+    if (action === 'clear') { recorder.clear(); return recorder.since(0); }
+    throw new Error('record action must be start | stop | clear');
   },
 
   'GET /api/projects': () => ({ projects: listProjects() }),
@@ -533,7 +625,7 @@ const routes = {
 
   'GET /api/log': () => ({ lines: ws.log.slice(-400) }),
 
-  'POST /api/open': (body) => {
+  'POST /api/open': async (body) => {
     const { session, dir } = body;
     if (dir) {
       loadWorkspace(dir);
@@ -543,7 +635,7 @@ const routes = {
     if (!session) throw new Error('open needs { session } or { dir }');
     const { path } = resolveSession(session);
     const out = workDirFor(path);
-    const r = engine(['extract', '--session', path, '--dir', out]);
+    const r = await engine(['extract', '--session', path, '--dir', out]);
     if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
     loadWorkspace(out);
     rememberRecent({ id: ws.config.sessionId, cwd: ws.config.cwd, path });
@@ -582,7 +674,7 @@ const routes = {
     return { ok: true, written: ws.blocks.length, saved: written, dirty: [] };
   },
 
-  'POST /api/build': (body) => {
+  'POST /api/build': (body) => exclusive('a build', async () => {
     if (!ws.dir) throw new Error('no session open');
     // Pins go in BEFORE the engine sees the blocks, every single build. That
     // is the whole guarantee: rewind, rebuild, resume -- the pin is re-applied
@@ -596,19 +688,32 @@ const routes = {
       args.push('--rename', `${r.from}=${r.to ?? ''}`);
     }
     if (body.install) args.push('--install');
-    const r = engine(args);
+    const r = await engine(args);
     const built = join(ws.dir, 'built.jsonl');
     const parsed = parseBuild(r.out);
     ws.lastBuild = { ...parsed, code: r.code, out: r.out, at: new Date().toISOString() };
-    const after = r.code === 0 ? traceOf(built, ws.config.tokens?.charsPerToken || 4) : null;
+    // The frame-level diff needs a FULL trace of both files. MEASURED: 17 s on
+    // a 44 MB session, during which the server answers nothing. So it is only
+    // computed for sessions small enough that it is instant, and says so
+    // otherwise rather than freezing the app to produce it.
+    const small = existsSync(ws.config.source) && statSync(ws.config.source).size <= DIFF_MAX_BYTES;
+    let diff = [];
+    let diffNote = null;
+    if (r.code === 0 && small) {
+      const ratio = ws.config.tokens?.charsPerToken || 4;
+      diff = diffFlow(traceOf(ws.config.source, ratio), traceOf(built, ratio));
+    } else if (r.code === 0) {
+      diffNote = `flow diff skipped: the session is over ${DIFF_MAX_BYTES / 1024 / 1024} MB`;
+    }
     return {
       ok: r.code === 0,
       out: r.out,
       summary: parsed,
-      diff: after && ws.baseline ? diffFlow(ws.baseline, after) : [],
+      diff,
+      diffNote,
       pins: ws.pinReport,
     };
-  },
+  }),
 
   'GET /api/flow': (body, url) => {
     const which = url.searchParams.get('of') || 'source';
@@ -659,7 +764,7 @@ const routes = {
 
   // The engine, run synchronously, for the UI's own buttons. The interactive
   // terminal is /api/shell/* below.
-  'POST /api/terminal': (body) => {
+  'POST /api/terminal': async (body) => {
     const argv = String(body.cmd || '').trim().split(/\s+/).filter(Boolean);
     if (!argv.length) return { code: 0, out: '' };
     const verb = argv[0] === 'ctx' ? argv[1] : argv[0];
@@ -670,7 +775,7 @@ const routes = {
     if (ws.dir && !args.includes('--dir') && ['extract', 'status', 'build'].includes(verb)) {
       args.push('--dir', ws.dir);
     }
-    return engine(args);
+    return await engine(args);
   },
 
   // --- the shell ------------------------------------------------------------
@@ -681,7 +786,7 @@ const routes = {
     return { ...sh.status(), lines: sh.since(since) };
   },
 
-  'POST /api/shell': (body) => {
+  'POST /api/shell': async (body) => {
     const sh = ensureShell(body.cwd);
     const action = body.action || 'write';
     if (action === 'write') {
@@ -694,7 +799,7 @@ const routes = {
         const args = argv[0] === 'ctx' ? argv.slice(1) : argv;
         if (ws.dir && !args.includes('--dir') && ['extract', 'status', 'build'].includes(verb)) args.push('--dir', ws.dir);
         sh.push('in', data.trim());
-        const r = engine(args);
+        const r = await engine(args);
         sh.push(r.code === 0 ? 'out' : 'err', r.out.replace(/\s+$/, ''));
         return { ...sh.status(), ran: 'engine' };
       }
@@ -764,7 +869,7 @@ const routes = {
     return { ...watcher.status(), events: watcher.since(since) };
   },
 
-  'POST /api/live': (body) => {
+  'POST /api/live': async (body) => {
     const w = ensureWatcher(body.cwd || ws.config?.cwd, ws.config?.tokens?.charsPerToken || 4);
     if (body.action === 'stop') { w.stop(); return w.status(); }
     if (body.action === 'start') { w.start(); return w.status(); }
@@ -772,7 +877,7 @@ const routes = {
       // Open the session the watcher saw, so its blocks are editable at once.
       const { path } = resolveSession(body.session);
       const out = workDirFor(path);
-      const r = engine(['extract', '--session', path, '--dir', out]);
+      const r = await engine(['extract', '--session', path, '--dir', out]);
       if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
       loadWorkspace(out);
       return { ...w.status(), state: stateView() };
@@ -850,7 +955,7 @@ const routes = {
       try {
         const { path } = resolveSession(sessionId);
         const out = workDirFor(path);
-        const ex = engine(['extract', '--session', path, '--dir', out]);
+        const ex = await engine(['extract', '--session', path, '--dir', out]);
         if (ex.code === 0) {
           loadWorkspace(out);
           reopened = stateView();
@@ -945,7 +1050,7 @@ export function startIde({ port = 7788, dir = null, session = null, exitWhenClos
   else if (session) {
     const { path } = resolveSession(session);
     const out = workDirFor(path);
-    const r = engine(['extract', '--session', path, '--dir', out]);
+    const r = engineSync(['extract', '--session', path, '--dir', out]);
     if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
     loadWorkspace(out);
   }
