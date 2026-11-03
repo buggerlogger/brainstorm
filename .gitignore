@@ -1,0 +1,7 @@
+node_modules/
+*.log
+built.jsonl
+BLOCKS.md
+CONFIG.json
+.DS_Store
+Thumbs.db

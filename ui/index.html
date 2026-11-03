@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brainstorm — context IDE</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="titlebar">
+  <div class="title">
+    <span class="logo">◼</span>
+    <span id="title-session">no session open</span>
+    <span class="chip" id="title-dirty" hidden>unsaved</span>
+  </div>
+  <div class="title-actions">
+    <button class="btn" id="btn-save" title="Save blocks to BLOCKS.md (Ctrl+S)">Save</button>
+    <button class="btn" id="btn-build" title="Build a session with your edits">Build</button>
+    <button class="btn primary" id="btn-install" title="Build and install so it can be resumed">Build &amp; Install</button>
+    <button class="btn ghost" id="btn-theme" title="Toggle theme">◐</button>
+  </div>
+</header>
+
+<div class="shell">
+
+  <nav class="activity" role="tablist" aria-label="Views">
+    <button class="act selected" data-view="explorer" title="Explorer">☰</button>
+    <button class="act" data-view="debug" title="Context debugger">▷</button>
+    <button class="act" data-view="probe" title="Find in context">⌕</button>
+    <button class="act" data-view="chat" title="Resume the chat">✉</button>
+  </nav>
+
+  <aside class="sidebar" id="sidebar">
+    <!-- EXPLORER -->
+    <section class="view" data-view="explorer">
+      <div class="view-head">Explorer
+        <button class="mini" id="btn-refresh" title="Rescan ~/.claude/projects">⟳</button>
+      </div>
+      <div class="tree" id="tree"><div class="muted pad">Scanning…</div></div>
+    </section>
+
+    <!-- DEBUGGER -->
+    <section class="view" data-view="debug" hidden>
+      <div class="view-head">Context debugger</div>
+      <div class="pad row">
+        <select id="flow-of" class="input">
+          <option value="source">original transcript</option>
+          <option value="built">built.jsonl (after build)</option>
+        </select>
+        <button class="btn sm" id="btn-trace">Trace</button>
+      </div>
+      <div class="pad row">
+        <button class="btn sm" id="dbg-restart" title="Back to the first frame">⏮</button>
+        <button class="btn sm" id="dbg-prev" title="Previous frame">◀</button>
+        <button class="btn sm primary" id="dbg-step" title="Step one frame (F10)">Step ▶</button>
+        <button class="btn sm" id="dbg-run" title="Run to the next breakpoint or the end (F5)">Run ⏩</button>
+      </div>
+      <div class="pad muted small" id="dbg-status">No trace yet.</div>
+      <div class="tree" id="flow-tree"></div>
+    </section>
+
+    <!-- PROBE -->
+    <section class="view" data-view="probe" hidden>
+      <div class="view-head">Find in context</div>
+      <div class="pad">
+        <input class="input wide" id="probe-text" placeholder="text that enters the context…">
+        <div class="row gap">
+          <button class="btn sm primary" id="btn-probe">Find</button>
+          <label class="check small"><input type="checkbox" id="probe-case"> case</label>
+        </div>
+        <div class="muted small" id="probe-status">Every frame the text appears in, in flow order.</div>
+      </div>
+      <div class="tree" id="probe-hits"></div>
+    </section>
+
+    <!-- CHAT -->
+    <section class="view" data-view="chat" hidden>
+      <div class="view-head">Resume the chat</div>
+      <div class="pad">
+        <div class="muted small" id="chat-target">Build &amp; Install first, then send into the new session.</div>
+        <textarea class="input area" id="chat-msg" rows="4" placeholder="message to send with --resume…"></textarea>
+        <div class="row gap">
+          <button class="btn sm primary" id="btn-send">Send</button>
+          <label class="check small"><input type="checkbox" id="chat-retrace" checked> re-trace after</label>
+        </div>
+      </div>
+      <div class="chatlog" id="chat-log"></div>
+    </section>
+  </aside>
+
+  <main class="main">
+    <div class="tabs" id="tabs"></div>
+    <div class="editor-wrap">
+      <div class="editor-meta">
+        <span id="editor-meta">Open a block from the Explorer, or a frame from the debugger.</span>
+        <label class="check small" style="float:right"><input type="checkbox" id="opt-wrap"> wrap</label>
+      </div>
+      <div class="editor-body">
+        <pre class="gutter" id="gutter"></pre>
+        <textarea class="editor" id="editor" spellcheck="false" placeholder=""></textarea>
+      </div>
+    </div>
+  </main>
+
+</div>
+
+<section class="panel" id="panel">
+  <div class="panel-tabs">
+    <button class="ptab selected" data-panel="terminal">Terminal</button>
+    <button class="ptab" data-panel="flow">Flow</button>
+    <button class="ptab" data-panel="problems">Problems<span class="badge" id="badge-problems" hidden>0</span></button>
+    <button class="ptab" data-panel="output">Output</button>
+    <div class="grow"></div>
+    <button class="mini" id="btn-panel-clear" title="Clear">⌫</button>
+    <button class="mini" id="btn-panel-toggle" title="Collapse / expand">▾</button>
+  </div>
+
+  <div class="panel-body" data-panel="terminal">
+    <pre class="term" id="term"></pre>
+    <div class="term-input">
+      <span class="prompt">brainstorm&nbsp;$</span>
+      <input id="term-cmd" class="bare" autocomplete="off" spellcheck="false" placeholder="status · build --install · verify --file built.jsonl · help">
+    </div>
+  </div>
+
+  <div class="panel-body" data-panel="flow" hidden>
+    <div class="flow-detail" id="flow-detail"><div class="muted pad">Trace a session in the debugger view.</div></div>
+  </div>
+
+  <div class="panel-body" data-panel="problems" hidden>
+    <div id="problems"><div class="muted pad">No build yet.</div></div>
+  </div>
+
+  <div class="panel-body" data-panel="output" hidden>
+    <pre class="term" id="output"></pre>
+  </div>
+</section>
+
+<footer class="statusbar">
+  <span id="st-blocks">—</span>
+  <span id="st-chars">—</span>
+  <span id="st-tokens">—</span>
+  <span id="st-ratio">—</span>
+  <div class="grow"></div>
+  <span id="st-frame"></span>
+  <span id="st-msg">ready</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
