@@ -3,9 +3,9 @@
 > **⚠ Not done yet.** This project is a work in progress. Features are still
 > being built and changed, and nothing here is a release.
 >
-> **© 2026 buggerlogger. All rights reserved.** Proprietary software — no
-> license is granted to use, copy, modify or distribute any part of it. See
-> [LICENSE](LICENSE).
+> **Open source — [Apache-2.0](LICENSE).** Created by
+> [buggerlogger](https://github.com/buggerlogger). Use it, fork it, change it,
+> put it in your own project. Keep the credit: see [Credit](#credit).
 
 A context debugger for Claude Code sessions, as a desktop app. Open a session,
 watch every API call it makes land in the debugger frame by frame, edit any of
@@ -363,13 +363,36 @@ about text; it cannot invent a new way to corrupt a session.
 **Not done yet.** brainstorm is under active development. Interfaces, file
 formats and behaviour can change without notice, and there is no release.
 
-## Copyright
+## License
 
-Copyright © 2026 buggerlogger (https://github.com/buggerlogger).
-All rights reserved.
+brainstorm is open source under the [Apache License 2.0](LICENSE).
 
-brainstorm is proprietary software. It is **not** open source, and no license
-is granted: you may not use, copy, modify, distribute or create derivative works
-of it, in whole or in part, without prior written permission. Being able to see
-this repository does not grant any right to the software. The full terms are in
-[LICENSE](LICENSE).
+You are free to use it — personally or commercially — and to fork it, modify
+it, and include it in your own projects. Contributions are welcome.
+
+## Credit
+
+brainstorm was created by **[buggerlogger](https://github.com/buggerlogger)**.
+Copyright 2026 buggerlogger.
+
+If you redistribute brainstorm or anything built from it — a fork, a copy in
+another repository, or code included in your own project — the license
+requires you to (Apache-2.0, Section 4):
+
+1. **keep the [NOTICE](NOTICE) file**, which credits the original author and
+   links this repository;
+2. **keep the copyright and license header** at the top of every source file;
+3. **mark the files you changed**, so your changes are not presented as the
+   original, and the original is not presented as yours;
+4. include a copy of the [LICENSE](LICENSE).
+
+The license does not let anyone use the name *brainstorm* or the author's name
+to suggest that a copy is the original or is endorsed by its author
+(Section 6). A fork is welcome; republishing this work with the credit removed
+is not permitted.
+
+A one-line credit in your own README is appreciated:
+
+```
+Based on brainstorm by buggerlogger — https://github.com/buggerlogger/brainstorm
+```

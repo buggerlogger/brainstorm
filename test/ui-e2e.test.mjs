@@ -1,6 +1,6 @@
-// Copyright (c) 2026 buggerlogger. All rights reserved.
-// Proprietary and confidential. No license is granted to use, copy, modify or
-// distribute this file, in whole or in part. See LICENSE.
+// Copyright 2026 buggerlogger (https://github.com/buggerlogger)
+// SPDX-License-Identifier: Apache-2.0
+// Licensed under the Apache License, Version 2.0. See LICENSE and NOTICE.
 //
 // ui-e2e.test.mjs — drive the real UI in headless Edge over the DevTools
 // protocol, and fail on ANY uncaught exception or console error.
