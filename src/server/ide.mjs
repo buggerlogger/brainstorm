@@ -16,10 +16,16 @@
 
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { join, dirname, extname, basename, resolve as pathResolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, dirname, extname, basename } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+
+import { IS_SEA, VERSION, engineCommand, readUi, appDataDir } from '../runtime.mjs';
+import { loadSettings, saveSettings, rememberRecent, SCHEMA, settingsFile } from '../core/settings.mjs';
+import { findSessions, searchStrings } from '../core/search.mjs';
+import { listAgents, traceAgent, readersOf } from '../core/agents.mjs';
+import { buildEntries, writeFolder, writeArchive, stampName, safeName } from '../core/export.mjs';
+import { openSessionWindow, resumeInWindow, stopWindow, listWindows, windowLog } from './session-window.mjs';
 
 import { listProjects, resolveSession } from '../core/sessions.mjs';
 import { parseBlocks, writeBlocks, groupBlocks } from '../core/blocksmd.mjs';
@@ -30,10 +36,9 @@ import { Shell, SHELLS, DEFAULT_SHELL } from './shell.mjs';
 import { SessionWatcher } from '../core/watch.mjs';
 import { openConsole, availableConsoles } from './console.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = pathResolve(HERE, '..', '..');
-const ENGINE = join(ROOT, 'src', 'ctx.mjs');
-const UI_DIR = join(ROOT, 'ui');
+// Paths and the engine command come from runtime.mjs, which knows whether
+// this is running from source or packaged inside brainstorm.exe.
+let lastBeat = 0;
 
 // Engine verbs, still usable from the terminal as a shorthand that runs the
 // bundled engine rather than whatever `ctx` happens to be on PATH.
@@ -65,6 +70,7 @@ const ws = {
   lastBuild: null,
   pins: [],          // sticky context, loaded by cwd, re-applied on every build
   pinReport: [],
+  window: null,      // tag of the session window claude runs in, if any
   log: [],
 };
 
@@ -76,7 +82,8 @@ const logLine = (s) => {
 };
 
 function engine(args, { timeout = 600000 } = {}) {
-  const r = spawnSync(process.execPath, [ENGINE, ...args], {
+  const [exe, argv] = engineCommand(args);
+  const r = spawnSync(exe, argv, {
     encoding: 'utf8',
     timeout,
     maxBuffer: 256 * 1024 * 1024,
@@ -237,7 +244,7 @@ function ensureWatcher(cwd, ratio) {
         }
       }
     } });
-    watcher.autoAttach = false;
+    watcher.autoAttach = !!loadSettings().autoAttach;
     watcher.start();
     logLine(`watching ${watcher.dir}`);
   } else {
@@ -252,11 +259,241 @@ function ensureShell(cwd) {
   return shell;
 }
 
+// The open session's agents. Cached per source file + size: listing reads
+// every subagent's meta and first record, which is cheap but not free.
+let agentsCache = { key: null, agents: [] };
+function agentsOf() {
+  if (!ws.config?.source || !existsSync(ws.config.source)) return [];
+  const st = statSync(ws.config.source);
+  const key = `${ws.config.source}|${st.size}|${st.mtimeMs}`;
+  if (agentsCache.key !== key) agentsCache = { key, agents: listAgents(ws.config.source) };
+  return agentsCache.agents;
+}
+
+// Which transcript a debugger request means. An ALLOW-LIST, never a path:
+// the first version fell through to `file = which`, so any request could hand
+// the tracer an arbitrary file on disk and read it back as frames.
+//
+//   source         the session as opened
+//   built          the last build
+//   agent:<id>     a subagent of the open session (or agent:main)
+function traceFor(which) {
+  const ratio = ws.config?.tokens?.charsPerToken || 4;
+  if (which === 'source') return { trace: traceOf(ws.config?.source, ratio), file: ws.config?.source };
+  if (which === 'built') {
+    const file = join(ws.dir || '', 'built.jsonl');
+    return { trace: traceOf(file, ratio), file };
+  }
+  if (typeof which === 'string' && which.startsWith('agent:')) {
+    const id = which.slice(6);
+    if (id === 'main') return { trace: traceOf(ws.config?.source, ratio), file: ws.config?.source };
+    const a = agentsOf().find((x) => x.id === id);
+    if (!a) throw new Error(`no agent ${id} in this session`);
+    return { trace: traceAgent(a, ratio), file: a.file };
+  }
+  throw new Error(`unknown flow source ${JSON.stringify(which)} (expected source, built or agent:<id>)`);
+}
+
+// Show a file or folder in Explorer, selected. explorer.exe exits 1 even on
+// success, so its exit code is not an error signal and is ignored.
+function reveal(path) {
+  if (process.platform === 'win32') {
+    spawn('explorer.exe', [`/select,${path}`], { detached: false, stdio: 'ignore' }).unref();
+  } else if (process.platform === 'darwin') {
+    spawn('open', ['-R', path], { stdio: 'ignore' }).unref();
+  } else {
+    spawn('xdg-open', [dirname(path)], { stdio: 'ignore' }).unref();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // routes
 // ---------------------------------------------------------------------------
 
 const routes = {
+  // --- app: version, heartbeat, settings ------------------------------------
+
+  'GET /api/version': () => ({ version: VERSION, sea: IS_SEA, node: process.version, appData: appDataDir() }),
+
+  // The app window pings this. When the window is closed the pings stop and
+  // the server exits (see startIde) -- otherwise closing the app would leave a
+  // headless server running in the background with no way to see it.
+  'POST /api/heartbeat': () => { lastBeat = Date.now(); return { ok: true }; },
+
+  'GET /api/settings': () => ({ settings: loadSettings(), schema: SCHEMA, file: settingsFile() }),
+
+  'POST /api/settings': (body) => {
+    const next = saveSettings(body || {});
+    if (watcher) watcher.autoAttach = !!next.autoAttach;
+    logLine('settings saved');
+    return { settings: next, schema: SCHEMA };
+  },
+
+  // --- the start gate -------------------------------------------------------
+
+  'GET /api/find-sessions': (body, url) => {
+    const r = findSessions(url.searchParams.get('q') || '', { limit: Number(url.searchParams.get('limit') || 60) });
+    return { ...r, recent: loadSettings().recent };
+  },
+
+  // --- agents and who-read-what --------------------------------------------
+
+  'GET /api/agents': () => {
+    if (!ws.config) throw new Error('no session open');
+    const agents = agentsOf();
+    const ratio = ws.config.tokens?.charsPerToken || 4;
+    return {
+      agents: agents.map((a) => {
+        let calls = null;
+        let mode = null;
+        try { const t = traceAgent(a, ratio); calls = t.calls.length; mode = t.mode; } catch { /* reported as null */ }
+        return { ...a, calls, mode };
+      }),
+    };
+  },
+
+  'GET /api/agent-flow': (body, url) => {
+    if (!ws.config) throw new Error('no session open');
+    const id = url.searchParams.get('id') || 'main';
+    const a = agentsOf().find((x) => x.id === id);
+    if (!a) throw new Error(`no agent ${id}`);
+    const t = traceAgent(a, ws.config.tokens?.charsPerToken || 4);
+    return {
+      agent: a,
+      mode: t.mode,
+      why: t.why,
+      calls: t.calls.map((c) => ({ ...c, framesTotal: c.frames.length, frames: c.frames.slice(0, 1500).map(({ text, ...rest }, i) => ({ ...rest, index: i, hasText: !!text })) })),
+    };
+  },
+
+  'POST /api/readers': (body) => {
+    if (!ws.config) throw new Error('no session open');
+    let text = String(body.text || '');
+    let line = body.line ?? null;
+    if (!text && body.blockId != null) {
+      const b = ws.blocks.find((x) => x.id === Number(body.blockId));
+      if (!b) throw new Error(`no block ${body.blockId}`);
+      text = b.text;
+      line = b.line;
+    }
+    return readersOf(agentsOf(), text, { line, ratio: ws.config.tokens?.charsPerToken || 4 });
+  },
+
+  // --- search for strings --------------------------------------------------
+
+  'POST /api/strings': (body) => {
+    if (!ws.config) throw new Error('no session open');
+    const ratio = ws.config.tokens?.charsPerToken || 4;
+    const scope = body.scope || 'all';
+    const sources = [];
+    if (scope === 'all' || scope === 'blocks') sources.push({ agent: 'main', label: 'blocks (editable)', blocks: ws.blocks });
+    if (scope === 'all' || scope === 'flow') sources.push({ agent: 'main', label: 'main agent', trace: traceOf(ws.config.source, ratio) });
+    if (scope === 'all' || scope === 'agents') {
+      for (const a of agentsOf().slice(1)) {
+        try { sources.push({ agent: a.id, label: a.label, trace: traceAgent(a, ratio) }); } catch { /* skip unreadable */ }
+      }
+    }
+    const r = searchStrings(sources, String(body.query || ''), {
+      caseSensitive: !!body.caseSensitive, regex: !!body.regex, limit: Math.min(5000, Number(body.limit || 1000)),
+    });
+    logLine(`strings ${JSON.stringify(String(body.query || '').slice(0, 40))} -> ${r.hits.length}${r.truncated ? '+' : ''}`);
+    return r;
+  },
+
+  // --- export ---------------------------------------------------------------
+
+  'POST /api/export': (body) => {
+    if (!ws.config) throw new Error('no session open');
+    const settings = loadSettings();
+    const ratio = ws.config.tokens?.charsPerToken || 4;
+    const folder = body.folder || null;
+    const trace = traceOf(ws.config.source, ratio);
+    const agents = settings.exportAgents ? agentsOf() : [];
+    const agentTraces = new Map();
+    for (const a of agents.slice(1)) { try { agentTraces.set(a.id, traceAgent(a, ratio)); } catch { /* skip */ } }
+    const name = stampName(ws.config.sessionId, folder ? safeName(folder, 30) : '');
+    const entries = buildEntries({
+      name, config: ws.config, blocks: ws.blocks, header: ws.header, trace, agents, agentTraces,
+      settings, scopeFolder: folder,
+    });
+    const base = body.dir || settings.exportDir;
+    mkdirSync(base, { recursive: true });
+    let result;
+    if (body.format === 'zip') {
+      result = writeArchive(join(base, `${name}.zip`), entries);
+      result.path = result.file;
+    } else {
+      result = writeFolder(base, entries);
+      result.path = result.dir;
+    }
+    logLine(`export ${body.format || 'folder'} -> ${result.path} (${entries.length} files)`);
+    if (settings.revealAfterExport && body.reveal !== false) reveal(result.path);
+    return { ok: true, format: body.format || 'folder', path: result.path, files: entries.length, bytes: result.bytes };
+  },
+
+  'POST /api/reveal': (body) => {
+    const p = String(body.path || '');
+    if (!p || !existsSync(p)) throw new Error(`nothing at ${p}`);
+    reveal(p);
+    return { ok: true };
+  },
+
+  // --- the session window (claude runs here; Save & Resume restarts it) -----
+
+  'GET /api/windows': () => ({ windows: listWindows() }),
+
+  'POST /api/window': (body) => {
+    const action = body.action || 'open';
+    const settings = loadSettings();
+    if (action === 'open') {
+      const sessionId = body.sessionId || ws.config?.sessionId;
+      const cwd = body.cwd || ws.config?.cwd;
+      if (!sessionId || !cwd) throw new Error('open a session first');
+      const w = openSessionWindow({ sessionId, cwd, shell: settings.shell, claudeArgs: settings.claudeArgs, claude: settings.claudePath || 'claude' });
+      ws.window = w.tag;
+      ensureWatcher(cwd, ws.config?.tokens?.charsPerToken || 4);
+      logLine(`window ${w.tag} opened: claude --resume ${sessionId}`);
+      return w;
+    }
+    const tag = body.tag || ws.window;
+    if (!tag) throw new Error('no session window is open');
+    if (action === 'resume') return resumeInWindow(tag, body.sessionId);
+    if (action === 'stop') return stopWindow(tag);
+    if (action === 'log') return { tag, log: windowLog(tag) };
+    throw new Error('window action must be open | resume | stop | log');
+  },
+
+  // Save & Resume: the whole loop in one call.
+  //   pins -> BLOCKS.md -> build --install -> switch the window to the new id
+  //   -> reopen the editor on the session that is now running.
+  'POST /api/save-resume': (body) => {
+    if (!ws.dir) throw new Error('no session open');
+    const settings = loadSettings();
+    ws.pinReport = applyPins(ws.blocks, ws.pins);
+    flushBlocks();
+    const r = engine(['build', '--dir', ws.dir, '--install']);
+    const parsed = parseBuild(r.out);
+    if (r.code !== 0 || !parsed.newId || !parsed.installed) {
+      return { ok: false, stage: 'build', out: r.out, summary: parsed };
+    }
+    const cwd = ws.config.cwd;
+    let win = null;
+    if (settings.resumeOnSave && body.resume !== false) {
+      const tag = ws.window && listWindows().some((w) => w.tag === ws.window) ? ws.window : null;
+      win = tag
+        ? { ...resumeInWindow(tag, parsed.newId), reused: true }
+        : { ...openSessionWindow({ sessionId: parsed.newId, cwd, shell: settings.shell, claudeArgs: settings.claudeArgs, claude: settings.claudePath || 'claude' }), reused: false };
+      ws.window = win.tag;
+    }
+    // Reopen on the NEW session so the tree is the context that is now live.
+    const out = workDirFor(parsed.installed);
+    const ex = engine(['extract', '--session', parsed.installed, '--dir', out]);
+    if (ex.code === 0) loadWorkspace(out);
+    rememberRecent({ id: parsed.newId, cwd, path: parsed.installed });
+    logLine(`save & resume -> ${parsed.newId}${win ? ` in window ${win.tag}${win.reused ? ' (same window)' : ' (new window)'}` : ''}`);
+    return { ok: true, summary: parsed, out: r.out, window: win, state: stateView() };
+  },
+
   'GET /api/projects': () => ({ projects: listProjects() }),
 
   'GET /api/state': () => stateView(),
@@ -276,6 +513,7 @@ const routes = {
     const r = engine(['extract', '--session', path, '--dir', out]);
     if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
     loadWorkspace(out);
+    rememberRecent({ id: ws.config.sessionId, cwd: ws.config.cwd, path });
     logLine(`opened session ${session}`);
     return { ...stateView(), engineOut: r.out };
   },
@@ -342,12 +580,8 @@ const routes = {
   'GET /api/flow': (body, url) => {
     const which = url.searchParams.get('of') || 'source';
     const ratio = ws.config?.tokens?.charsPerToken || 4;
-    let file;
-    if (which === 'built') file = join(ws.dir || '', 'built.jsonl');
-    else if (which === 'source') file = ws.config?.source;
-    else file = which;
-    const trace = traceOf(file, ratio);
-    if (!trace) throw new Error(`no transcript to trace at ${file}`);
+    const { trace, file } = traceFor(which);
+    if (!trace) throw new Error(`no transcript to trace for ${which}`);
     // The frames carry full text; strip it for the list view and fetch one
     // frame's text on demand. A 25 MB trace must not cross the wire twice.
     // MEASURED: a 20,653-line session reconstructs to 7,623 frames, so the
@@ -376,17 +610,14 @@ const routes = {
     const which = url.searchParams.get('of') || 'source';
     const ci = Number(url.searchParams.get('call'));
     const fi = Number(url.searchParams.get('frame'));
-    const file = which === 'built' ? join(ws.dir || '', 'built.jsonl') : ws.config?.source;
-    const trace = traceOf(file, ws.config?.tokens?.charsPerToken || 4);
+    const { trace } = traceFor(which);
     const f = trace?.calls?.[ci]?.frames?.[fi];
     if (!f) throw new Error(`no frame ${ci}/${fi}`);
     return f;
   },
 
   'POST /api/probe': (body) => {
-    const which = body.of || 'source';
-    const file = which === 'built' ? join(ws.dir || '', 'built.jsonl') : ws.config?.source;
-    const trace = traceOf(file, ws.config?.tokens?.charsPerToken || 4);
+    const { trace } = traceFor(body.of || 'source');
     if (!trace) throw new Error('nothing to probe');
     const hits = probe(trace, body.needle || '', { caseSensitive: !!body.caseSensitive });
     logLine(`probe ${JSON.stringify((body.needle || '').slice(0, 40))} -> ${hits.length} frame(s)`);
@@ -661,19 +892,22 @@ const json = (res, code, obj) => {
 
 function serveStatic(res, urlPath) {
   const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
-  // No path traversal: resolve and require the result to stay under ui/.
-  const file = pathResolve(UI_DIR, rel);
-  if (!file.startsWith(UI_DIR) || !existsSync(file) || !statSync(file).isFile()) {
+  // readUi refuses traversal, and inside the exe only registered assets exist.
+  const body = readUi(rel);
+  if (!body) {
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('not found');
     return;
   }
-  const body = readFileSync(file);
-  res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream', 'content-length': body.length });
+  res.writeHead(200, {
+    'content-type': MIME[extname(rel)] || 'application/octet-stream',
+    'content-length': body.length,
+    'cache-control': 'no-store',
+  });
   res.end(body);
 }
 
-export function startIde({ port = 7788, dir = null, session = null } = {}) {
+export function startIde({ port = 7788, dir = null, session = null, exitWhenClosed = false, onListening = null } = {}) {
   if (dir) loadWorkspace(dir);
   else if (session) {
     const { path } = resolveSession(session);
@@ -701,9 +935,26 @@ export function startIde({ port = 7788, dir = null, session = null } = {}) {
   });
 
   server.listen(port, '127.0.0.1', () => {
-    console.log(`\n  brainstorm IDE   http://127.0.0.1:${port}`);
+    const real = server.address().port;
+    console.log(`\n  brainstorm IDE   http://127.0.0.1:${real}`);
     if (ws.dir) console.log(`  workspace        ${ws.dir}`);
     console.log('  loopback only. Ctrl+C to stop.\n');
+    if (onListening) onListening(real);
   });
+
+  // App mode: the window sends a heartbeat every few seconds. Once one has
+  // arrived, a silence longer than the grace period means the window is gone,
+  // and the server goes with it -- the way closing an app closes the app.
+  if (exitWhenClosed) {
+    const GRACE_MS = 15000;
+    const t = setInterval(() => {
+      if (lastBeat && Date.now() - lastBeat > GRACE_MS) {
+        console.log('  app window closed; exiting');
+        try { shell?.dispose(); } catch { /* ignore */ }
+        process.exit(0);
+      }
+    }, 2000);
+    t.unref();
+  }
   return server;
 }

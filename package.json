@@ -1,19 +1,23 @@
 {
   "name": "brainstorm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "A context IDE for Claude Code sessions: browse, edit and debug what actually enters the model's context, then resume the session with your changes.",
+  "description": "A context debugger for Claude Code sessions, as a desktop app: watch every API call frame by frame, edit the context, and resume on the edited session in the same terminal window.",
   "type": "module",
   "bin": {
     "brainstorm": "bin/brainstorm.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
+    "app": "node bin/app.mjs",
     "ide": "node bin/brainstorm.mjs ide",
     "flow": "node bin/brainstorm.mjs flow",
-    "test": "node test/run.mjs"
+    "build:exe": "node scripts/build-exe.mjs",
+    "test": "node test/run.mjs",
+    "test:all": "node test/run.mjs --all",
+    "test:exe": "node test/run.mjs --exe"
   },
   "dependencies": {},
   "keywords": [

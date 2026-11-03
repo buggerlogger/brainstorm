@@ -1,43 +1,47 @@
 // run.mjs — the test runner.
 //
-//   node test/run.mjs            unit + flow tests (fast, no network)
-//   node test/run.mjs --all      also the end-to-end tests that spawn Claude
+//   node test/run.mjs            fast: syntax, UI wiring, flow model, zip/export
+//   node test/run.mjs --all      also everything that needs a server, a browser,
+//                                a terminal window, or real Claude sessions
+//   node test/run.mjs --exe      also build dist/brainstorm.exe and test it
 //
-// The end-to-end tests are opt-in because each one starts real `claude -p`
-// sessions and takes minutes. They are the only tests that prove the thing
-// actually works, so they are not optional before a release -- only before a
-// quick edit.
+// The slow suites are opt-in because they open windows on screen and start
+// real `claude -p` sessions. They are the only tests that prove the thing
+// works, so they are not optional before a release -- only before a quick edit.
 
 import { spawnSync, spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const ALL = process.argv.includes('--all');
+const EXE = process.argv.includes('--exe');
+const PORT = 7799;
+const EXE_PORT = 7798;
 
 let failed = 0;
 const results = [];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function run(label, args, { optional = false } = {}) {
+function run(label, file, args = []) {
   process.stdout.write(`\n──── ${label}\n`);
-  const r = spawnSync(process.execPath, args, { stdio: 'inherit', cwd: ROOT });
+  const r = spawnSync(process.execPath, [join(HERE, file), ...args], { stdio: 'inherit', cwd: ROOT });
   const ok = r.status === 0;
-  results.push({ label, ok, optional });
-  if (!ok && !optional) failed++;
+  results.push({ label, ok });
+  if (!ok) failed++;
   return ok;
 }
 
-// A transcript that actually records api-request data, for the flow test.
-// Only 39 of 189 sessions on this machine had it, so one is SEARCHED for
-// rather than hardcoded -- a hardcoded path is how the old tool ended up
-// reporting line numbers from a session that had nothing to do with the input.
+// A transcript that records api-request data, for the flow test. Only a
+// minority of sessions have it, so one is SEARCHED for rather than hardcoded:
+// a hardcoded path is how the old tool came to report line numbers from a
+// session that had nothing to do with its input.
 function findRecordedTranscript() {
   const P = join(homedir(), '.claude', 'projects');
   if (!existsSync(P)) return null;
-  const { openSync, readSync, closeSync } = require('node:fs');
   for (const d of readdirSync(P)) {
     const dir = join(P, d);
     let st;
@@ -55,17 +59,24 @@ function findRecordedTranscript() {
         readSync(fd, buf, 0, buf.length, 0);
         if (buf.toString('utf8').includes('"api-request-shape"')) return file;
       } catch { /* skip */ } finally {
-        if (fd !== undefined) try { closeSync(fd); } catch {}
+        if (fd !== undefined) try { closeSync(fd); } catch { /* ignore */ }
       }
     }
   }
   return null;
 }
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+async function startServer(cmd, args, port) {
+  const srv = spawn(cmd, args, { cwd: ROOT, stdio: 'ignore' });
+  for (let i = 0; i < 40; i++) {
+    try { if ((await fetch(`http://127.0.0.1:${port}/api/version`)).ok) return srv; } catch { /* not yet */ }
+    await sleep(250);
+  }
+  srv.kill();
+  throw new Error(`server on ${port} did not start`);
+}
 
-console.log(`brainstorm tests  ${ALL ? '(including end-to-end)' : '(fast; pass --all for end-to-end)'}`);
+console.log(`brainstorm tests  ${ALL ? '(all)' : '(fast; --all for the rest)'}${EXE ? ' + exe' : ''}`);
 
 // 1. syntax of every source file
 {
@@ -75,8 +86,8 @@ console.log(`brainstorm tests  ${ALL ? '(including end-to-end)' : '(fast; pass -
     for (const f of readdirSync(d)) {
       const p = join(d, f);
       const st = statSync(p);
-      if (st.isDirectory()) { if (!['node_modules', '.git'].includes(f)) walk(p); }
-      else if (f.endsWith('.mjs') || (f.endsWith('.js') && p.includes('ui'))) files.push(p);
+      if (st.isDirectory()) { if (!['node_modules', '.git', 'dist'].includes(f)) walk(p); }
+      else if (f.endsWith('.mjs') || (f.endsWith('.js') && dirname(p).endsWith('ui'))) files.push(p);
     }
   };
   walk(ROOT);
@@ -84,51 +95,52 @@ console.log(`brainstorm tests  ${ALL ? '(including end-to-end)' : '(fast; pass -
   for (const f of files) {
     const r = spawnSync(process.execPath, ['--check', f], { encoding: 'utf8' });
     if (r.status !== 0) { bad++; console.log(`  FAIL  ${f.replace(ROOT, '.')}\n${r.stderr}`); }
-    else console.log(`  ok    ${f.replace(ROOT, '.')}`);
   }
-  results.push({ label: 'syntax', ok: bad === 0, optional: false });
+  console.log(`  ${files.length - bad}/${files.length} files parse`);
+  results.push({ label: 'syntax', ok: bad === 0 });
   if (bad) failed++;
 }
 
-// 2. front-end wiring (no browser)
-run('ui wiring', [join(HERE, 'ui.test.mjs')]);
-
-// 3. flow reconstruction against a real transcript
+// 2. fast, no server
+run('ui wiring', 'ui.test.mjs');
+run('zip + export', 'export.test.mjs');
 {
   const t = findRecordedTranscript();
-  if (t) run('flow (recorded mode)', [join(HERE, 'flow.test.mjs'), t]);
-  else {
-    console.log('\n──── flow\n  SKIP  no transcript with api-request records found on this machine');
-    results.push({ label: 'flow', ok: true, optional: true });
-  }
+  if (t) run('flow (recorded mode)', 'flow.test.mjs', [t]);
+  else { console.log('\n──── flow\n  SKIP  no transcript with api-request records on this machine'); results.push({ label: 'flow (skipped)', ok: true }); }
 }
 
-// 4. the HTTP API, against a server this runner starts and stops
+// 3. everything that needs a server
 if (ALL) {
-  process.stdout.write('\n──── api (starts an IDE server)\n');
-  const t = findRecordedTranscript();
-  if (!t) {
-    console.log('  SKIP  needs a session to open');
-    results.push({ label: 'api', ok: true, optional: true });
-  } else {
-    const port = 7799;
-    const srv = spawn(process.execPath, [join(ROOT, 'bin', 'brainstorm.mjs'), 'ide', '--port', String(port), '--session', t], {
-      cwd: ROOT, stdio: 'ignore', detached: false,
-    });
-    await new Promise((r) => setTimeout(r, 2500));
-    const ok = run('api', [join(HERE, 'api.test.mjs'), `http://127.0.0.1:${port}`]);
+  const srv = await startServer(process.execPath, [join(ROOT, 'bin', 'app.mjs'), '--no-window', '--port', String(PORT)], PORT);
+  const base = `http://127.0.0.1:${PORT}`;
+  try {
+    run('ui end to end (headless Edge)', 'ui-e2e.test.mjs', [base]);
+    run('api: edit, pins, rewind, integrity', 'api.test.mjs', [base]);
+    run('shell + live detection (real claude -p)', 'shell.test.mjs', [base]);
+    run('real terminal window + attach', 'console.test.mjs', [base, '--open']);
+    run('save & resume, same window', 'save-resume.test.mjs', [base]);
+  } finally {
     srv.kill();
-    if (!ok) failed++;
   }
+  run('session window switches in place', 'window.test.mjs');
+  run('skill swap (two real claude sessions)', 'skillswap.test.mjs');
 }
 
-// 5. the real terminal window and the attach list
-if (ALL) run('console + attach', [join(HERE, 'console.test.mjs'), `http://127.0.0.1:7799`]);
-
-// 6. the end-to-end skill swap: two real Claude sessions
-if (ALL) run('skill swap (end to end)', [join(HERE, 'skillswap.test.mjs')]);
+// 4. the packaged exe
+if (EXE) {
+  process.stdout.write('\n──── build dist/brainstorm.exe\n');
+  const b = spawnSync(process.execPath, [join(ROOT, 'scripts', 'build-exe.mjs')], { stdio: 'inherit', cwd: ROOT });
+  results.push({ label: 'build exe', ok: b.status === 0 });
+  if (b.status !== 0) failed++;
+  else {
+    const exe = join(ROOT, 'dist', process.platform === 'win32' ? 'brainstorm.exe' : 'brainstorm');
+    const srv = await startServer(exe, ['--no-window', '--port', String(EXE_PORT)], EXE_PORT);
+    try { run('exe end to end', 'exe.test.mjs', [`http://127.0.0.1:${EXE_PORT}`]); } finally { srv.kill(); }
+  }
+}
 
 console.log('\n════ summary');
-for (const r of results) console.log(`  ${r.ok ? 'PASS' : 'FAIL'}  ${r.label}${r.optional && r.ok ? '' : ''}`);
+for (const r of results) console.log(`  ${r.ok ? 'PASS' : 'FAIL'}  ${r.label}`);
 console.log(`\n${failed === 0 ? 'ALL SUITES PASSED' : `${failed} SUITE(S) FAILED`}\n`);
 process.exit(failed ? 1 : 0);

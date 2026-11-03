@@ -147,7 +147,24 @@ try {
   console.log(b.out.split('\n').filter((l) => l.trim()).map((l) => `    ${l}`).join('\n'));
   check(b.code === 0, 'build exited 0');
   check(/verify\s+OK/.test(b.out), 'verify OK');
-  check(/tool mirrors\s+3/.test(b.out), 'all 3 tool-mirror fields synced');
+  // ⛔ Not a fixed 3. The model's answer is sometimes written as TWO assistant
+  // records, each with its own attributionSkill, so the source can carry 3 or
+  // 4 mirrors depending on how the reply was chunked. The exact invariant is
+  // that the engine synced every mirror the SOURCE contains -- counted here
+  // from the source rather than assumed.
+  const MIRROR_KEYS = ['wireToolInputs', 'toolUseResult', 'attributionSkill'];
+  let inSource = 0;
+  // The source path as the ENGINE recorded it, not re-derived from the cwd.
+  const sourceFile = JSON.parse(readFileSync(join(outDir, 'CONFIG.json'), 'utf8')).source;
+  for (const line of readFileSync(sourceFile, 'utf8').split('\n')) {
+    let r;
+    try { r = JSON.parse(line); } catch { continue; }
+    for (const k of MIRROR_KEYS) {
+      if (r[k] !== undefined) inSource += (JSON.stringify(r[k]).match(new RegExp(ALPHA.id, 'g')) || []).length;
+    }
+  }
+  const synced = Number((b.out.match(/tool mirrors\s+(\d+)/) || [])[1]);
+  check(inSource >= 3 && synced === inSource, 'every tool-mirror occurrence in the source was synced', `${synced} synced, ${inSource} in the source`);
 
   // Take the destination from what build REPORTED, not from a second copy of
   // the cwd-to-project-dir encoding. A duplicated encoding is exactly how the

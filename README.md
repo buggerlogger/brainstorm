@@ -1,16 +1,106 @@
 # brainstorm
 
-A context IDE for Claude Code sessions. Browse a transcript as folders and
-blocks, edit any of it, step through what actually enters the model's context,
-rebuild the session and resume it with your changes.
-
-![layout](docs/layout.md)
+A context debugger for Claude Code sessions, as a desktop app. Open a session,
+watch every API call it makes land in the debugger frame by frame, edit any of
+the context, and **Save & Resume** — claude restarts on the edited session in
+the same terminal window, and you keep working.
 
 ```
-brainstorm ide                      open the editor on http://127.0.0.1:7788
-brainstorm flow --session <id>      print the context flow for each API call
-brainstorm list | extract | build   the engine, unchanged
+dist\brainstorm.exe                  the app (one file, no install)
+node bin/app.mjs                     the same, from source
+node bin/brainstorm.mjs flow ...     the context flow on the command line
+node bin/brainstorm.mjs build ...    the engine, unchanged
 ```
+
+## The loop
+
+1. **Start.** The app opens blurred, asking for a session. Type an id, an id
+   prefix, a folder, or words from the first prompt — matches rank in that
+   order. Recent sessions come first.
+2. **Run.** Leave *open a terminal* ticked and a real terminal window opens in
+   the session's folder running `claude --resume <id>`, with a genuine TTY.
+3. **Watch.** Each API call claude makes is a *jump*. With **follow** on, the
+   debugger steps through every frame that call added, one at a time, and each
+   frame shows **who read it**: which agents had that text in context, on
+   which calls.
+4. **Edit.** Change any block, drop it, or pin text that must survive a rewind.
+5. **Save & Resume** (`Ctrl+Shift+S`). Build, verify, install a new session —
+   then claude is restarted on it *in the same window*.
+
+Step 5 is a loop inside the window, not a new window. The terminal runs a
+small runner that reads a control file; Save & Resume writes the new session id
+and ends only the claude that runner started (by the pid it recorded, never by
+searching command lines). The runner sees claude exit and resumes the new id.
+No dead tab, no lost scrollback, no second window. Measured: two consecutive
+Save & Resumes, runner pid unchanged, `--resume N1` then `--resume N2`, the
+second session carrying both edits.
+
+## Right-click
+
+| on | you can |
+|---|---|
+| a block | open · where does it load? · **who read it?** · **search in strings** · copy · pin a copy · drop/restore · rewind to here · **export its folder (folder or ZIP)** |
+| a folder | expand · search · **dump to files** · **export as ZIP** |
+| a frame | open · who read it? · breakpoint (`F9`) · run to next breakpoint · copy · where else does it load? |
+| a session | open · open + terminal · show in Explorer · copy id / path |
+| editor selection | search in strings · where does it load? · who read it? · pin it |
+| anywhere else | open session (`Ctrl+O`) · strings (`Ctrl+Shift+F`) · **dump whole context** · **export ZIP** · Save & Resume · settings |
+
+**Search in strings** is the x64dbg view: every occurrence across editable
+blocks, the main agent's frames and every subagent's, with the match
+highlighted. Click a row to jump straight to it.
+
+**Export** writes a tree that sorts the way it reads — numbered folders, files
+named by block id and transcript line — plus `README.txt`, `CONFIG.json`,
+`BLOCKS.md` (so an export can be re-imported), the context flow, and each
+subagent. A folder or a ZIP; same tree either way.
+
+File *names* in exports are ASCII; file *contents* keep every character.
+Measured: a spec-correct archive (bit 11 set, valid UTF-8) with an Arabic file
+name is read exactly by .NET's ZipFile, and Windows' own `tar.exe` **skips** it
+with "unreadable filename", even when told the charset. A reader that silently
+drops a file is data loss, so names are folded to ASCII (accents to their base
+letter, the rest to `_`).
+
+## Agents
+
+A session is not one context. Every Agent call starts a subagent with its own
+transcript under `<session>/subagents/`, with a `meta.json` naming the parent
+tool call. A **fork** also inherits the parent conversation up to a recorded
+uuid, so text the fork never saw in its own file *was* still in its context.
+"Who read it" accounts for that: those readers are marked *inherited*. Click
+any agent to step through its own flow.
+
+## The app
+
+`brainstorm.exe` is Node's single-executable format: the server, the engine and
+the UI are inside one 89 MB file. It opens an Edge app window — chromeless,
+its own taskbar entry — with a **separate profile** under
+`%APPDATA%\brainstorm`, so nothing from your own browser (cookies, history,
+extensions) is read or used. Closing the window closes the app: the window
+sends a heartbeat, and the server exits when it stops. A second launch finds
+the running app and opens another window onto it.
+
+Inside the exe the engine is the exe itself, re-invoked as
+`brainstorm.exe --engine <verb>` — there is no `ctx.mjs` on disk to hand to
+Node. Every path that used to come from `import.meta.url` goes through
+`src/runtime.mjs`, the one place that knows which mode it is in.
+
+```
+node scripts/build-exe.mjs           -> dist\brainstorm.exe
+```
+
+Unsigned: SmartScreen may warn on first run. That is a missing code-signing
+certificate, not a defect.
+
+## Settings
+
+Everything is in the ⚙ view and `%APPDATA%\brainstorm\settings.json`: the
+shell, whether a terminal opens on load, the claude executable and extra
+arguments, Save & Resume behaviour, follow delay and which frames to follow,
+auto-attach, export folder and contents, theme, font size, wrap, poll rates.
+The settings form is rendered from the same schema that validates what is
+saved, so an option cannot exist in one and not the other.
 
 ## Why
 
@@ -163,13 +253,18 @@ total is complete would understate the window by ~52K characters.
 
 ## Install
 
+Use `dist\brainstorm.exe` — nothing to install. Or from source:
+
 ```
 git clone <this repo>
 cd brainstorm
-node bin/brainstorm.mjs ide
+node bin/app.mjs                 # the app window
+node bin/brainstorm.mjs ide      # the server alone, in your own browser
 ```
 
-No dependencies. Node 18+.
+No runtime dependencies. Node 22+ from source (the zip writer uses
+`zlib.crc32`); building the exe needs Node 24 and fetches esbuild and postject
+through npx at pinned versions.
 
 ## Tests
 
@@ -177,9 +272,14 @@ No dependencies. Node 18+.
 node test/run.mjs              syntax + flow model      (fast)
 node test/run.mjs --all        also the HTTP API and a real end-to-end swap
 node test/sweep.mjs            the flow model over every transcript on the box
-node test/shell.test.mjs       the terminal, and live detection of a real session
-node test/console.test.mjs --open   pops a window and proves it is a real TTY
+node test/run.mjs --exe        also build brainstorm.exe and test it end to end
 ```
+
+`--all` includes `ui-e2e.test.mjs`, which drives the real UI in headless Edge
+over the DevTools protocol (throwaway profile) and fails on any uncaught
+exception or console error — the class of bug no static check sees — and
+`save-resume.test.mjs`, which runs the whole Save & Resume loop twice against a
+stub claude and checks the window was never replaced.
 
 `test/shell.test.mjs` runs `claude -p` **through the IDE's own shell** and
 asserts the watcher reported a jump with a real context size — the claim that
@@ -206,6 +306,15 @@ src/core/watch.mjs      session detection; jumps and calls, live
 src/server/ide.mjs      the HTTP API (loopback only)
 src/server/shell.mjs    the real shell behind the terminal
 src/server/console.mjs  popping a real terminal window on the desktop
+src/server/session-window.mjs  the window claude runs in; resume in place
+src/runtime.mjs         source vs packaged exe: assets, engine, app data
+src/core/agents.mjs     subagents, forks, who read what
+src/core/search.mjs     the start gate's session search; search for strings
+src/core/export.mjs     dump to sorted folders; zip.mjs writes the archive
+src/core/settings.mjs   the settings schema
+bin/app.mjs             the exe's entry: app window, or --engine
+scripts/build-exe.mjs   single-executable build
+ui/gate.js menu.js follow.js panels.js   start gate, right-click, follow, panels
 ui/                     the editor: index.html, app.js, styles.css
 test/                   run.mjs, flow.test.mjs, ui.test.mjs, api.test.mjs,
                         shell.test.mjs, skillswap.test.mjs, sweep.mjs

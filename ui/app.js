@@ -82,17 +82,17 @@ async function loadProjects() {
   }
 }
 
-function node({ depth = 0, twisty = '', icon = '', iconCls = '', label, meta = '', cls = '', onClick, onAux, onMenu }) {
+function node({ depth = 0, twisty = '', icon = '', iconCls = '', label, meta = '', cls = '', onClick, onAux, data = null }) {
   const n = el('div', `node d${depth} ${cls}`);
   n.appendChild(el('span', 'tw', twisty));
   if (icon) n.appendChild(el('span', `ico ${iconCls}`, icon));
   n.appendChild(el('span', 'lbl', label));
   if (meta !== '') n.appendChild(el('span', 'meta', meta));
   if (onClick) n.addEventListener('click', onClick);
-  if (onMenu) {
-    n.title = 'right-click: rewind to here';
-    n.addEventListener('contextmenu', (e) => { e.preventDefault(); onMenu(); });
-  }
+  // What this node IS, for the context menu: data-block-id, data-folder,
+  // data-call/data-frame, data-session-path. The menu reads these rather than
+  // every node carrying its own right-click handler.
+  if (data) for (const [k, v] of Object.entries(data)) if (v !== undefined && v !== null) n.dataset[k] = String(v);
   if (onAux) {
     const eye = el('span', 'eye', '◉');
     eye.title = 'include / drop this block';
@@ -121,6 +121,7 @@ function renderTree() {
         depth: 1, twisty: open ? '▾' : '▸', icon: '🗀', label: g.name,
         meta: `${g.blocks.length}`,
         onClick: () => { toggle(key); renderTree(); },
+        data: { folder: g.name },
       }));
       if (!open) continue;
       for (const b of g.blocks) {
@@ -132,7 +133,7 @@ function renderTree() {
           cls: `${b.keep ? '' : 'dropped'} ${b.dirty ? 'dirty' : ''} ${S.active === `block:${b.id}` ? 'selected' : ''}`,
           onClick: () => openBlock(b.id),
           onAux: () => toggleKeep(b.id, !b.keep),
-          onMenu: () => rewind(b.id, b.title),
+          data: { blockId: b.id, folder: g.name },
         }));
       }
     }
@@ -156,6 +157,7 @@ function renderTree() {
         meta: `${fmt(s.bytes)}B`,
         cls: S.state?.config?.sessionId === s.id ? 'selected' : '',
         onClick: () => openSession(s.id, s.path),
+        data: { sessionId: s.id, sessionPath: s.path },
       }));
     }
   }
@@ -417,6 +419,7 @@ function renderFlowTree() {
       label: `call ${ci}  L${c.line}`,
       meta: `~${fmt(c.totals.tokens)} tok`,
       onClick: () => { toggle(key); renderFlowTree(); },
+      data: { call: ci },
     }));
     if (!open) return;
     frag.appendChild(node({
@@ -432,12 +435,7 @@ function renderFlowTree() {
         meta: `${fmt(f.chars)}${f.cache ? ' ⛁' : ''}`,
         cls: `${bp ? 'bp' : ''} ${cur ? 'cur' : ''}`,
         onClick: () => jumpTo(ci, fi),
-      });
-      n.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        const k = `${ci}:${fi}`;
-        if (S.breakpoints.has(k)) S.breakpoints.delete(k); else S.breakpoints.add(k);
-        renderFlowTree();
+        data: { call: ci, frame: fi },
       });
       frag.appendChild(n);
     });
@@ -487,8 +485,11 @@ function renderFrameDetail(f, ci, fi) {
   put('cache', f.cache ? JSON.stringify(f.cache) : 'no breakpoint here');
   put('transcript line', f.source?.line ?? '—');
   const pre = el('pre', 'frame-text', (f.text || '').slice(0, 20000));
-  box.replaceChildren(dl, pre);
-  selectPanel('flow');
+  const readers = el('div', 'readers');
+  readers.id = 'frame-readers';
+  box.replaceChildren(dl, readers, pre);
+  if (!S.following) selectPanel('flow');
+  window.brainstorm?.onFrame?.(f, ci, fi);
 }
 
 function stepFrames(dir) {
@@ -850,6 +851,7 @@ async function pollLive() {
       S.liveSeq = r.events[r.events.length - 1].seq;
       S.liveEvents = S.liveEvents.concat(r.events).slice(-800);
       liveRender(r.events);
+      window.brainstorm?.onLive?.(r.events);
       if (S.panel !== 'live') {
         S.liveUnread += r.events.filter((e) => e.type === 'jump' || e.type === 'call').length;
         if (S.liveUnread) {
@@ -1093,7 +1095,7 @@ $('#term-cmd').addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); build(false); return; }
   if (e.key === 'F10') { e.preventDefault(); stepFrames(1); return; }
   if (e.key === 'F5') { e.preventDefault(); runToBreakpoint(); return; }
@@ -1125,8 +1127,10 @@ document.addEventListener('keydown', (e) => {
   await pollLive();
   await loadConsoleKinds();
   await refreshSessions();
-  setInterval(pollShell, 600);
-  setInterval(pollLive, 1200);
+  window.brainstorm?.onBoot?.();
+  const cfg = window.brainstorm?.settings || {};
+  setInterval(pollShell, cfg.pollShellMs || 600);
+  setInterval(pollLive, cfg.pollLiveMs || 1000);
   // Only while the Attach panel is open: a process list nobody is looking
   // at does not need rescanning every two seconds.
   setInterval(() => { if (S.panel === 'attach') refreshSessions(); }, 2000);

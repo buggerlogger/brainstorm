@@ -17,7 +17,11 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const html = readFileSync(join(ROOT, 'ui', 'index.html'), 'utf8');
-const js = readFileSync(join(ROOT, 'ui', 'app.js'), 'utf8');
+// Every script the page loads, in the order it loads them. Reading only
+// app.js would call every id the new modules use "dead", and miss every id
+// they reach for that does not exist.
+const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+const js = scripts.map((f) => readFileSync(join(ROOT, 'ui', f), 'utf8')).join('\n;\n');
 const css = readFileSync(join(ROOT, 'ui', 'styles.css'), 'utf8');
 
 let failures = 0;
@@ -35,14 +39,22 @@ const jsIds = matchAll(/\$\('#([A-Za-z0-9_-]+)'\)/g, js);
 
 console.log(`\n  ${htmlIds.length} ids in markup, ${jsIds.length} referenced by script\n`);
 
-const missing = jsIds.filter((id) => !htmlIds.includes(id));
-check(missing.length === 0, 'every id the script reaches for exists in the markup', missing.length ? missing.join(', ') : '');
+// Ids a script CREATES at runtime (`node.id = 'frame-readers'`) are real ids
+// that just are not in the static markup. A script reaching for one is fine,
+// as long as some script also creates it.
+const runtimeIds = matchAll(/\.id\s*=\s*'([A-Za-z0-9_-]+)'/g, js);
+const missing = jsIds.filter((id) => !htmlIds.includes(id) && !runtimeIds.includes(id));
+check(missing.length === 0, 'every id the script reaches for exists (in markup or created at runtime)', missing.length ? missing.join(', ') : '');
 
 // An id counts as referenced however it is spelled: $('#id'), a bare '#id'
-// passed to a helper, or the plain name in a data attribute lookup. Checking
-// only the $('#id') form reported the splitters as dead when they are wired
-// through wireSplitter('#split-side', ...).
-const referenced = (id) => jsIds.includes(id)
+// passed to a helper, the plain name in a lookup -- or by the MARKUP itself,
+// through aria-labelledby / for / aria-describedby / aria-controls. Checking
+// only the $('#id') form reported the splitters as dead (they are wired with
+// wireSplitter('#split-side', ...)) and the gate title as dead (it is the
+// dialog's accessible name).
+const markupRefs = matchAll(/\s(?:aria-labelledby|aria-describedby|aria-controls|for)="([^"]+)"/g, html)
+  .flatMap((v) => v.split(/\s+/));
+const referenced = (id) => jsIds.includes(id) || markupRefs.includes(id)
   || js.includes(`'#${id}'`) || js.includes(`"#${id}"`)
   || js.includes(`'${id}'`) || js.includes(`"${id}"`);
 const unread = htmlIds.filter((id) => !referenced(id));

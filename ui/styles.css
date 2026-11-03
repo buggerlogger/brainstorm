@@ -337,3 +337,96 @@ body.resizing iframe, body.resizing .editor { pointer-events: none; }
 @media (max-width: 1100px) {
   .shell { grid-template-columns: 48px 250px minmax(0, 1fr); }
 }
+
+/* ---------- start gate ---------- */
+/* The app renders behind the gate, blurred and inert, so choosing a session
+   reveals a UI that is already laid out rather than one that pops in. */
+.gate {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 12vh;
+  background: rgba(10, 10, 12, .45);
+  backdrop-filter: blur(9px) saturate(.8);
+  -webkit-backdrop-filter: blur(9px) saturate(.8);
+}
+.gate[hidden] { display: none; }
+.gate-card {
+  width: min(760px, calc(100vw - 32px));
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.55);
+  display: flex; flex-direction: column; max-height: 72vh;
+}
+.gate-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 8px; font-size: 15px; color: var(--fg-bright); }
+.gate-head .logo { color: var(--blue); }
+.gate-head .muted { margin-left: auto; }
+/* .input.wide sets width:100%, which out-specifies a single class AND adds to
+   the 16px side margins -- the box overflowed the card. Matching the same
+   specificity and subtracting the margins fixes both. */
+.input.wide.gate-input { margin: 4px 16px 10px; width: calc(100% - 32px); font-size: 14px; padding: 8px 10px; font-family: var(--mono); }
+.gate-list { overflow: auto; border-top: 1px solid var(--border); flex: 1; min-height: 80px; }
+.gate-sec { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-dim); padding: 8px 16px 4px; }
+.gate-row { display: grid; grid-template-columns: 92px 1fr auto; gap: 4px 12px; padding: 7px 16px; cursor: pointer; border-left: 2px solid transparent; }
+.gate-row:hover { background: var(--bg-hover); }
+.gate-row.sel { background: var(--bg-select); border-left-color: var(--focus); }
+.gate-row .id { font-family: var(--mono); font-size: 12px; color: var(--fg-bright); }
+.gate-row .cwd { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gate-row .when { font-size: 11px; color: var(--fg-dim); text-align: right; white-space: nowrap; }
+.gate-row .prompt { grid-column: 2 / 4; font-size: 11px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gate-row .why { font-size: 10px; color: var(--green); font-family: var(--mono); }
+.gate-row .dup { color: var(--yellow); font-size: 10px; }
+.gate-foot { display: flex; align-items: center; gap: 10px; padding: 8px 16px 12px; border-top: 1px solid var(--border); }
+.gate-empty { padding: 18px 16px; color: var(--fg-dim); font-size: 12px; }
+body.gated .titlebar, body.gated .shell, body.gated .panel, body.gated .statusbar, body.gated .splitter { pointer-events: none; }
+
+/* ---------- context menu ---------- */
+.ctxmenu {
+  position: fixed; z-index: 120; min-width: 230px; max-width: 360px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px;
+  box-shadow: 0 10px 34px rgba(0,0,0,.5); padding: 4px 0; font-size: 12px;
+}
+.ctxmenu[hidden] { display: none; }
+.ctxmenu .mi { display: flex; align-items: center; gap: 10px; padding: 5px 14px; cursor: pointer; white-space: nowrap; }
+.ctxmenu .mi:hover, .ctxmenu .mi.sel { background: var(--accent); color: #fff; }
+.ctxmenu .mi.off { opacity: .45; cursor: default; }
+.ctxmenu .mi.off:hover { background: none; color: inherit; }
+.ctxmenu .mi .k { margin-left: auto; color: var(--fg-dim); font-size: 11px; }
+.ctxmenu .mi:hover .k, .ctxmenu .mi.sel .k { color: #e0e0e0; }
+.ctxmenu .mi .ic { width: 14px; text-align: center; flex: none; }
+.ctxmenu .sep { height: 1px; background: var(--border); margin: 4px 0; }
+.ctxmenu .hd { padding: 4px 14px 2px; font-size: 10px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .06em; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- strings ---------- */
+.strings { overflow: auto; flex: 1; font-size: 12px; }
+.srow { display: grid; grid-template-columns: 150px 170px 48px 1fr; gap: 10px; padding: 3px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.srow:hover { background: var(--bg-hover); }
+.srow .ag { color: var(--purple); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .loc { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .n { font-family: var(--mono); font-size: 11px; color: var(--yellow); text-align: right; }
+.srow .ex { font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .ex mark { background: rgba(220, 220, 100, .35); color: inherit; border-radius: 2px; }
+.input.grow { flex: 1; min-width: 120px; }
+
+/* ---------- readers ---------- */
+.readers { padding: 6px 10px 10px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.readers h4 { margin: 2px 0 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-dim); font-weight: normal; }
+.reader { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
+.reader .who { color: var(--purple); min-width: 160px; }
+.reader .calls { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
+.reader .tag { font-size: 10px; color: var(--yellow); }
+.reader a { color: var(--blue); cursor: pointer; text-decoration: none; }
+.reader a:hover { text-decoration: underline; }
+
+/* ---------- settings ---------- */
+.settings { overflow: auto; flex: 1; padding: 4px 10px; font-size: 12px; }
+.settings .grp { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-dim); margin: 12px 0 4px; }
+.settings .opt { padding: 5px 0; border-bottom: 1px solid var(--border); }
+.settings .opt label { display: flex; align-items: center; gap: 8px; }
+.settings .opt .lbl { flex: 1; }
+.settings .opt .help { color: var(--fg-dim); font-size: 11px; margin-top: 2px; }
+.settings .opt input[type="text"], .settings .opt input[type="number"], .settings .opt select { width: 100%; margin-top: 4px; }
+
+/* ---------- follow ---------- */
+.chip.follow { background: var(--green); }
+.node.flash { animation: flash .9s ease-out; }
+@keyframes flash { from { background: rgba(78, 201, 176, .45); } to { background: transparent; } }
+.activity .grow { flex: 1; }

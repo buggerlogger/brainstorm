@@ -15,9 +15,12 @@
     <span class="chip" id="title-dirty" hidden>unsaved</span>
   </div>
   <div class="title-actions">
+    <span class="chip follow" id="follow-chip" hidden title="Following the live session: each new frame is jumped to as it arrives">● following</span>
+    <button class="btn" id="btn-gate" title="Open another session (Ctrl+O)">Open…</button>
     <button class="btn" id="btn-save" title="Save blocks to BLOCKS.md (Ctrl+S)">Save</button>
     <button class="btn" id="btn-build" title="Build a session with your edits">Build</button>
-    <button class="btn primary" id="btn-install" title="Build and install so it can be resumed">Build &amp; Install</button>
+    <button class="btn" id="btn-install" title="Build and install so it can be resumed">Build &amp; Install</button>
+    <button class="btn primary" id="btn-save-resume" title="Save, build, install, and restart claude on the edited session in the same terminal window (Ctrl+Shift+S)">Save &amp; Resume ⟳</button>
     <button class="btn ghost" id="btn-theme" title="Toggle theme">◐</button>
   </div>
 </header>
@@ -29,7 +32,10 @@
     <button class="act" data-view="debug" title="Context debugger">▷</button>
     <button class="act" data-view="probe" title="Find in context">⌕</button>
     <button class="act" data-view="pins" title="Pinned context — survives rewind">⊕</button>
+    <button class="act" data-view="agents" title="Agents — who read what">◎</button>
     <button class="act" data-view="chat" title="Resume the chat">✉</button>
+    <div class="grow"></div>
+    <button class="act" data-view="settings" title="Settings">⚙</button>
   </nav>
 
   <aside class="sidebar">
@@ -46,10 +52,14 @@
       <div class="view-head">Context debugger</div>
       <div class="pad row">
         <select id="flow-of" class="input">
-          <option value="source">original transcript</option>
+          <option value="source">main agent (session)</option>
           <option value="built">built.jsonl (after build)</option>
         </select>
         <button class="btn sm" id="btn-trace">Trace</button>
+      </div>
+      <div class="pad row">
+        <label class="check small" title="Jump to each new frame as the live session produces it"><input type="checkbox" id="opt-follow"> follow live</label>
+        <span class="muted small" id="follow-queue"></span>
       </div>
       <div class="pad row">
         <button class="btn sm" id="dbg-restart" title="Back to the first frame">⏮</button>
@@ -104,6 +114,29 @@
       </div>
     </section>
 
+    <!-- AGENTS -->
+    <section class="view" data-view="agents" hidden>
+      <div class="view-head">Agents
+        <button class="mini" id="agents-refresh" title="Rescan subagents">⟳</button>
+      </div>
+      <div class="pad muted small">
+        The main agent and every subagent it started. Each has its own context.
+        A fork also inherits the parent conversation up to the point it was started.
+        Click one to step through its flow.
+      </div>
+      <div class="tree" id="agent-list"></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" data-view="settings" hidden>
+      <div class="view-head">Settings</div>
+      <div class="settings" id="settings-form"></div>
+      <div class="pad row">
+        <button class="btn sm primary" id="settings-save">Save settings</button>
+        <span class="muted small" id="settings-file"></span>
+      </div>
+    </section>
+
     <!-- CHAT -->
     <section class="view" data-view="chat" hidden>
       <div class="view-head">Resume the chat</div>
@@ -147,6 +180,7 @@
   <div class="panel-tabs">
     <button class="ptab selected" data-panel="terminal">Terminal</button>
     <button class="ptab" data-panel="flow">Flow</button>
+    <button class="ptab" data-panel="strings">Strings</button>
     <button class="ptab" data-panel="attach">Attach</button>
     <button class="ptab" data-panel="live">Live<span class="badge" id="badge-live" hidden>0</span></button>
     <button class="ptab" data-panel="problems">Problems<span class="badge" id="badge-problems" hidden>0</span></button>
@@ -205,6 +239,23 @@
     <div class="flow-detail" id="flow-detail"><div class="muted pad">Trace a session in the debugger view.</div></div>
   </div>
 
+  <div class="panel-body" data-panel="strings" hidden>
+    <div class="term-bar">
+      <input class="input sm grow" id="strings-q" placeholder="search for strings — every block and every frame, across all agents">
+      <select class="input sm" id="strings-scope" title="Where to search">
+        <option value="all">everywhere</option>
+        <option value="blocks">editable blocks</option>
+        <option value="flow">main agent flow</option>
+        <option value="agents">subagents</option>
+      </select>
+      <label class="check small"><input type="checkbox" id="strings-case"> case</label>
+      <label class="check small"><input type="checkbox" id="strings-regex"> regex</label>
+      <button class="btn sm primary" id="strings-go">Search</button>
+      <span class="muted small" id="strings-status"></span>
+    </div>
+    <div class="strings" id="strings-results"></div>
+  </div>
+
   <div class="panel-body" data-panel="problems" hidden>
     <div id="problems"><div class="muted pad">No build yet.</div></div>
   </div>
@@ -231,6 +282,32 @@
   <span id="st-msg">ready</span>
 </footer>
 
+<!-- START GATE: the app is blurred and inert until a session is chosen -->
+<div class="gate" id="gate" hidden>
+  <div class="gate-card" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+    <div class="gate-head">
+      <span class="logo">◼</span>
+      <span id="gate-title">Open a session</span>
+      <span class="muted small" id="gate-count"></span>
+    </div>
+    <input class="input wide gate-input" id="gate-q" autocomplete="off" spellcheck="false"
+           placeholder="session id, an id prefix, a folder, or words from the first prompt">
+    <div class="gate-list" id="gate-list" role="listbox"></div>
+    <div class="gate-foot">
+      <label class="check small"><input type="checkbox" id="gate-console"> open a terminal running <code>claude --resume</code></label>
+      <div class="grow"></div>
+      <span class="muted small">↑↓ choose · Enter open · Esc browse without one</span>
+    </div>
+  </div>
+</div>
+
+<!-- CONTEXT MENU -->
+<div class="ctxmenu" id="ctxmenu" hidden role="menu"></div>
+
 <script src="app.js"></script>
+<script src="menu.js"></script>
+<script src="gate.js"></script>
+<script src="follow.js"></script>
+<script src="panels.js"></script>
 </body>
 </html>

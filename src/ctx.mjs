@@ -69,7 +69,13 @@ import { fileURLToPath } from 'node:url';
 
 // fileURLToPath, not hand-stripping the url: on Windows import.meta.url is
 // file:///C:/... and a manual slice leaves a leading slash that fails to open.
-const selfPath = () => fileURLToPath(import.meta.url);
+//
+// Inside brainstorm.exe the engine is bundled, import.meta.url is gone and
+// there is no source file to read -- selfPath() is then null, and every caller
+// has a packaged-mode branch rather than crashing at --help.
+const selfPath = () => {
+  try { return import.meta && import.meta.url ? fileURLToPath(import.meta.url) : null; } catch { return null; }
+};
 
 const PROJECTS = join(homedir(), '.claude', 'projects');
 const argv = process.argv.slice(2);
@@ -761,7 +767,6 @@ function cmdExtract() {
     tokens: {
       measured: cal.measured,
       charsPerToken: Number(cal.ratio.toFixed(3)),
-      measured: cal.measured,
       why: cal.why || null,
       fixedFloor: cal.floor,
       usageRecords: cal.points,
@@ -1214,6 +1219,7 @@ function cmdUi() {
   const dir = resolve(opt('dir', '.'));
   readEditDir(dir); // fail fast if the folder is wrong
   const port = Number(opt('port', '7777'));
+  if (!selfPath()) die('the legacy `ui` verb is not bundled; run brainstorm.exe itself');
   const uiFile = join(dirname(selfPath()), 'ctx-ui.html');
 
   const json = (res, code, body) => {
@@ -1315,7 +1321,10 @@ function readBody(req) {
 // runCli shells out to this same file so the UI and the terminal run EXACTLY
 // the same code path. Re-implementing build in the server is how the two drift.
 function runCli(args) {
-  const r = spawnSync(process.execPath, [selfPath(), ...args], { encoding: 'utf8' });
+  // Packaged: the exe IS the engine, re-invoked with --engine.
+  const r = selfPath()
+    ? spawnSync(process.execPath, [selfPath(), ...args], { encoding: 'utf8' })
+    : spawnSync(process.execPath, ['--engine', ...args], { encoding: 'utf8' });
   return { code: r.status ?? 1, out: (r.stdout || '') + (r.stderr || '') };
 }
 
@@ -1331,6 +1340,10 @@ function printHelp() {
   // defects 3 and 4 were never printed at all. A count literal is a second
   // copy of the header's length that nothing keeps in sync.
   const out = [];
+  if (!selfPath()) {
+    console.log('ctx engine, bundled in brainstorm.exe\n\n  list | extract | status | build | verify\n\nRun from source for the full help.');
+    return;
+  }
   for (const line of readFileSync(selfPath(), 'utf8').split('\n').slice(1)) {
     if (!line.startsWith('//')) break;
     out.push(line.replace(/^\/\/ ?/, ''));
