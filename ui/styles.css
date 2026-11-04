@@ -500,6 +500,8 @@ body.gated .titlebar, body.gated .shell, body.gated .panel, body.gated .statusba
 .live-note.warn { color: var(--yellow); }
 .live-card { padding: 6px 8px 8px; }
 .live-card.inflight .live-step { color: var(--fg-bright); }
+.live-step.clickable { cursor: pointer; }
+.live-step.clickable:hover { text-decoration: underline; }
 .live-step { color: var(--fg); margin-bottom: 6px; overflow-wrap: anywhere; }
 .live-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--bg-input); gap: 1px; }
 .live-bar .seg { min-width: 3px; }

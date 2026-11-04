@@ -216,6 +216,122 @@ function reapplyPins() {
   return ws.pinReport;
 }
 
+// --- what claude sends, as the transcript is NOW ------------------------------
+// The blocks carry `sent` from the moment the session was opened. A rewind or
+// a /compact in claude changes which records are on the conversation after
+// that -- MEASURED: a person rewound and the abandoned messages still looked
+// sent, and a main context went into a message before two compactions. So
+// the marks are recomputed from the file as it is: before every build, Save &
+// Resume and rewind, and every few seconds while the file changes. Pins move
+// with them, so the main context always lands in a message claude is sent.
+let sentEpoch = 0;
+let sentSeen = '';
+// A /compact or a rewind made since the blocks were extracted: the page says
+// so, and Save & Resume refreshes first (see sourceGrew).
+let staleCompaction = false;
+let liveBoundaries = 0;   // compactions in the transcript as it is now
+
+// ⛔ How many compactions the session has NOW, not when its blocks were made:
+// a main context saved after a /compact but before a refresh recorded the old
+// count, and the refresh then paused it at once.
+function liveCompactions() {
+  remarkSent({ force: true });
+  return Math.max(compactionsOf(ws.config), liveBoundaries);
+}
+
+// The transcript grew since the blocks were made: claude kept talking, or
+// compacted. Without a refresh its newest messages -- a new summary among
+// them -- are no block at all, and pins have nowhere sent to go.
+function sourceGrew() {
+  const src = ws.config?.source;
+  if (!src || !existsSync(src) || !ws.loadedSize) return false;
+  return statSync(src).size > ws.loadedSize;
+}
+const REMARK_MAX_BYTES = 40 * 1024 * 1024;   // larger files: at build time only
+
+function remarkSent({ force = false } = {}) {
+  const src = ws.config?.source;
+  if (!ws.blocks?.length || !src || !existsSync(src)) return { moved: 0, back: 0 };
+  const st = statSync(src);
+  const key = `${src}|${st.size}|${st.mtimeMs}`;
+  if (!force && (key === sentSeen || st.size > REMARK_MAX_BYTES)) return { moved: 0, back: 0 };
+  sentSeen = key;
+  const uuidAt = new Map();
+  const parentOf = new Map();
+  let leaf = null;
+  let boundaries = 0;
+  readFileSync(src, 'utf8').split('\n').forEach((line, i) => {
+    if (!line || line[0] !== '{') return;
+    let o;
+    try { o = JSON.parse(line); } catch { return; }   // a line still being written
+    if (o.type === 'summary' || (o.type === 'system' && o.uuid && !o.parentUuid)) boundaries++;
+    if (!o.uuid) return;
+    uuidAt.set(i + 1, o.uuid);
+    parentOf.set(o.uuid, o.parentUuid || null);
+    if (o.message && (o.type === 'user' || o.type === 'assistant') && !o.isSidechain) leaf = o.uuid;
+  });
+  const on = new Set();
+  for (let u = leaf; u && !on.has(u); u = parentOf.get(u) || null) on.add(u);
+  const wasStale = staleCompaction;
+  liveBoundaries = boundaries;
+  staleCompaction = boundaries > compactionsOf(ws.config);
+  if (staleCompaction !== wasStale) sentEpoch++;
+  let moved = 0;
+  let back = 0;
+  for (const b of ws.blocks) {
+    const u = uuidAt.get(b.line);
+    if (!u) continue;
+    if (!on.has(u) && b.sent !== false) { b.sent = false; moved++; }
+    else if (on.has(u) && b.sent === false) { delete b.sent; back++; }
+  }
+  if (moved || back) {
+    sentEpoch++;
+    reapplyPins();
+    flushBlocks();
+    logLine(`sent marks: ${moved} block(s) no longer sent, ${back} sent again -- the conversation changed (a rewind or a compaction)`);
+  }
+  return { moved, back, epoch: sentEpoch };
+}
+
+// Refresh the blocks from the transcript as it is NOW, edits carried over by
+// the line they live on. Shared by the ⟳ button, Save & Resume and build.
+async function refreshWorkspace() {
+  if (!ws.dir) throw new Error('no session open');
+  const tmp = mkdtempSync(join(tmpdir(), 'bs-refresh-'));
+  try {
+    const r = await engine(['extract', '--session', ws.config.source, '--dir', tmp]);
+    if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
+    const fresh = parseBlocks(join(tmp, 'BLOCKS.md'));
+    const freshConfig = JSON.parse(readFileSync(join(tmp, 'CONFIG.json'), 'utf8'));
+    const freshText = new Map(fresh.blocks.map((b) => [b.id, stripAllPins(b.text)]));
+    const byLine = new Map(fresh.blocks.map((b) => [`${b.line}|${b.kind}`, b]));
+    const carried = [];
+    const lost = [];
+    for (const old of ws.blocks) {
+      const text = stripAllPins(old.text);
+      const edited = ws.pristine?.has(old.id) && text !== ws.pristine.get(old.id);
+      const dropped = old.keep === false;
+      if (!edited && !dropped) continue;
+      const f = byLine.get(`${old.line}|${old.kind}`);
+      if (!f) { lost.push({ id: old.id, line: old.line, kind: old.kind }); continue; }
+      if (edited) f.text = text;
+      if (dropped) f.keep = false;
+      carried.push(f.id);
+    }
+    writeBlocks(join(ws.dir, 'BLOCKS.md'), fresh.header, fresh.blocks);
+    writeFileSync(join(ws.dir, 'CONFIG.json'), JSON.stringify(freshConfig, null, 2));
+    const before = ws.blocks.length;
+    loadWorkspace(ws.dir, { record: false });
+    // pristine is the transcript's text, not the carried edits: those stay edits
+    ws.pristine = freshText;
+    flushBlocks();
+    logLine(`refresh: ${before} -> ${ws.blocks.length} blocks, ${carried.length} edit(s) carried, ${lost.length} lost`);
+    return { ok: true, before, after: ws.blocks.length, carried, lost, state: stateView() };
+  } finally {
+    try { rmSync(tmp, { recursive: true, force: true }); } catch { /* temp */ }
+  }
+}
+
 function mainView() {
   const pin = mainPinOf(ws.pins || []);
   if (!pin) return { exists: false, text: '' };
@@ -247,6 +363,10 @@ function loadWorkspace(dir, { record = true } = {}) {
   // Each block's text as it was opened, without pins: what an edit is told
   // apart from, and what moving an edit to the main context subtracts.
   ws.pristine = new Map(ws.blocks.map((b) => [b.id, stripAllPins(b.text)]));
+  // how big the transcript was when these blocks were made
+  ws.loadedSize = config.source && existsSync(config.source) ? statSync(config.source).size : 0;
+  sentSeen = '';
+  staleCompaction = false;
   // No eager full trace here. It used to be computed on every open and took
   // 17 s on a 44 MB session, blocking the server; nothing needed it at open.
   ws.baseline = null;
@@ -315,6 +435,8 @@ function stateView() {
     anchors: ANCHORS,
     main: mainView(),
     compactions: compactionsOf(ws.config),
+    sentEpoch,
+    stale: { grew: sourceGrew(), compacted: staleCompaction },
     groups: groups.map((g) => ({
       name: g.name,
       chars: g.chars,
@@ -422,6 +544,15 @@ function windowLaunch(settings) {
     env: plugins.length ? { BRAINSTORM_LIVE: liveFile() } : {},
   };
 }
+
+// ⛔ claude --resume finds a session by the folder it runs in, and a session
+// window runs in the folder it was opened in. Switching a window to a session
+// from ANOTHER folder started claude where that session cannot be found --
+// measured: the app's open terminal was in ctxtest-skill, and Save & Resume of
+// a C:\Users\ASOO session would have resumed it there. A window is only reused
+// for a session of its own folder.
+const normDir = (d) => String(d || '').replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase();
+const sameDir = (a, b) => !!a && !!b && normDir(a) === normDir(b);
 
 // The last window opened, per session: a second open of the same session
 // inside this window of time is the same request (a double click, two app
@@ -690,7 +821,12 @@ const routes = {
     }
     const tag = body.tag || ws.window;
     if (!tag) throw new Error('no session window is open');
-    if (action === 'resume') return resumeInWindow(tag, body.sessionId, windowLaunch(settings));
+    if (action === 'resume') {
+      const w = listWindows().find((x) => x.tag === tag);
+      const cwd = body.cwd || ws.config?.cwd;
+      if (w && cwd && !sameDir(w.cwd, cwd)) throw new Error(`terminal ${tag} runs in ${w.cwd}, and claude --resume can only find a session there; this session belongs to ${cwd}: open a terminal for it instead`);
+      return resumeInWindow(tag, body.sessionId, windowLaunch(settings));
+    }
     if (action === 'stop') return stopWindow(tag, { close: !!body.close });
     if (action === 'log') return { tag, log: windowLog(tag) };
     throw new Error('window action must be open | resume | stop | log');
@@ -698,7 +834,7 @@ const routes = {
 
   // --- live hooks: the brainstorm-live mod's events, from inside claude -------
   'POST /api/hook': (body) => liveFeed.ingest(body),
-  'GET /api/hooks': (_body, url) => ({ ...liveFeed.since(url.searchParams.get('since')), claimed: liveClaimed, file: liveFile(), waiting: claudeWaiting() }),
+  'GET /api/hooks': (_body, url) => ({ ...liveFeed.since(url.searchParams.get('since')), claimed: liveClaimed, file: liveFile(), waiting: claudeWaiting(), sentEpoch, stale: { grew: sourceGrew(), compacted: staleCompaction } }),
   'POST /api/hooks': (body) => {
     if (body.action === 'clear') liveFeed.clear();
     return { ...liveFeed.since(0), claimed: liveClaimed, file: liveFile() };
@@ -710,6 +846,12 @@ const routes = {
   'POST /api/save-resume': (body) => exclusive('Save & Resume', async () => {
     if (!ws.dir) throw new Error('no session open');
     const settings = loadSettings();
+    // ⛔ the transcript moved on since the blocks were made (claude talked, or
+    // compacted): refresh first. A /compact made after opening left the main
+    // context with no sent message to go into, and the new summary was no
+    // block to edit.
+    if (sourceGrew()) await refreshWorkspace();
+    remarkSent({ force: true });
     reapplyPins();
     flushBlocks();
     const r = await engine(['build', '--dir', ws.dir, '--install']);
@@ -720,7 +862,8 @@ const routes = {
     const cwd = ws.config.cwd;
     let win = null;
     if (settings.resumeOnSave && body.resume !== false) {
-      const tag = ws.window && listWindows().some((w) => w.tag === ws.window) ? ws.window : null;
+      const open = ws.window ? listWindows().find((w) => w.tag === ws.window) : null;
+      const tag = open && sameDir(open.cwd, cwd) ? ws.window : null;
       win = tag
         ? { ...resumeInWindow(tag, parsed.newId, windowLaunch(settings)), reused: true }
         : { ...openSessionWindow({ sessionId: parsed.newId, cwd, ...windowLaunch(settings) }), reused: false };
@@ -816,6 +959,8 @@ const routes = {
 
   'POST /api/build': (body) => exclusive('a build', async () => {
     if (!ws.dir) throw new Error('no session open');
+    if (sourceGrew()) await refreshWorkspace();
+    remarkSent({ force: true });
     // Pins go in BEFORE the engine sees the blocks, every single build. That
     // is the whole guarantee: rewind, rebuild, resume -- the pin is re-applied
     // from its own store each time, so it cannot be edited or rewound away.
@@ -1064,12 +1209,12 @@ const routes = {
     const text = String(body.text ?? '');
     let pin = mainPinOf(ws.pins);
     if (!pin) {
-      pin = newPin({ text, main: true, compactions: compactionsOf(ws.config) });
+      pin = newPin({ text, main: true, compactions: liveCompactions() });
       ws.pins.unshift(pin);
     } else {
       pin.text = text;
       pin.enabled = true;
-      pin.compactions = compactionsOf(ws.config);
+      pin.compactions = liveCompactions();
     }
     savePins(ws.config.cwd, ws.pins);
     reapplyPins();
@@ -1084,48 +1229,14 @@ const routes = {
   // by the transcript line it lives on; one whose line is no longer in the
   // conversation (rewound or compacted away in claude) cannot be, and is
   // reported instead of silently dropped.
-  'POST /api/refresh': () => exclusive('a refresh', async () => {
-    if (!ws.dir) throw new Error('no session open');
-    const tmp = mkdtempSync(join(tmpdir(), 'bs-refresh-'));
-    try {
-      const r = await engine(['extract', '--session', ws.config.source, '--dir', tmp]);
-      if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
-      const fresh = parseBlocks(join(tmp, 'BLOCKS.md'));
-      const freshConfig = JSON.parse(readFileSync(join(tmp, 'CONFIG.json'), 'utf8'));
-      const freshText = new Map(fresh.blocks.map((b) => [b.id, stripAllPins(b.text)]));
-      const byLine = new Map(fresh.blocks.map((b) => [`${b.line}|${b.kind}`, b]));
-      const carried = [];
-      const lost = [];
-      for (const old of ws.blocks) {
-        const text = stripAllPins(old.text);
-        const edited = ws.pristine?.has(old.id) && text !== ws.pristine.get(old.id);
-        const dropped = old.keep === false;
-        if (!edited && !dropped) continue;
-        const f = byLine.get(`${old.line}|${old.kind}`);
-        if (!f) { lost.push({ id: old.id, line: old.line, kind: old.kind }); continue; }
-        if (edited) f.text = text;
-        if (dropped) f.keep = false;
-        carried.push(f.id);
-      }
-      writeBlocks(join(ws.dir, 'BLOCKS.md'), fresh.header, fresh.blocks);
-      writeFileSync(join(ws.dir, 'CONFIG.json'), JSON.stringify(freshConfig, null, 2));
-      const before = ws.blocks.length;
-      loadWorkspace(ws.dir, { record: false });
-      // pristine is the transcript's text, not the carried edits: those stay edits
-      ws.pristine = freshText;
-      flushBlocks();
-      logLine(`refresh: ${before} -> ${ws.blocks.length} blocks, ${carried.length} edit(s) carried, ${lost.length} lost`);
-      return { ok: true, before, after: ws.blocks.length, carried, lost, state: stateView() };
-    } finally {
-      try { rmSync(tmp, { recursive: true, force: true }); } catch { /* temp */ }
-    }
-  }),
+  'POST /api/refresh': () => exclusive('a refresh', refreshWorkspace),
 
   // --- rewind ---------------------------------------------------------------
 
   'POST /api/rewind': (body) => {
     if (!ws.dir) throw new Error('no session open');
     const id = Number(body.blockId);
+    remarkSent({ force: true });
     const res = rewindTo(ws.blocks, id);
     for (const dropped of res.dropped) ws.dirty.add(dropped);
     // Re-apply AFTER the drop so a pin whose anchor just vanished re-homes
@@ -1286,6 +1397,8 @@ export function startIde({ port = 7788, dir = null, session = null, exitWhenClos
     if (onListening) onListening(real);
     claimLiveFile(real);
     setInterval(() => claimLiveFile(real), 3000).unref();
+    // a rewind or a /compact in claude: the sent marks follow within seconds
+    setInterval(() => { try { remarkSent(); } catch (err) { logLine(`sent marks: ${err.message}`); } }, 3000).unref();
     process.on('exit', releaseLiveFile);
   });
 

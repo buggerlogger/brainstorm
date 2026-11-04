@@ -137,6 +137,33 @@ folder, twice: a small task, the fact edited and a message cleared, Save &
 Resume, claude asked without tools (it answers with the edit), a new task, then
 a tool call dropped and a main context set, and claude asked again.
 
+## How to edit the context: the flow that works
+
+Measured with a real claude, compacted twice (`test/real-compact.test.mjs`):
+
+1. **Let claude finish.** Edit between turns, not while a request is in flight
+   (the Live panel says which).
+2. **Refresh if the tree says so.** After a rewind or a `/compact` in claude the
+   tree shows ⟳ at the top. A compaction's new summary is no block until then.
+   Save & Resume refreshes by itself, but you cannot edit what is not there.
+3. **Edit what is sent.** Blocks under *Not sent* are on a rewound branch or
+   before a compaction: editing them changes nothing. In a compacted session
+   the conversation starts at the **summary**: that is the block to edit.
+4. **Put lasting facts in the main context (◆), not in a message.** A message
+   is lost when the chat is rewound before it; the main context is put back on
+   every build and after every rewind, into the first message claude is sent.
+5. **To remove something, drop it (◉) or clear it.** Clearing drops it; the
+   build never writes an empty message (the API refuses one).
+6. **Save & Resume.** The terminal restarts claude on the edited session.
+7. **Check by asking without tools**: "Without using any tools, what does this
+   conversation say about X?" -- a tool would read the files on disk instead.
+
+After a `/compact` the main context is **paused** if it was saved before the
+compaction (the summary now carries it); save it again to pin it again. After
+Save & Resume a compacted session looks almost empty and shows `Ctx: 0`: that
+is what a compacted conversation is -- the summary -- and the context size
+appears with the first request.
+
 ## Right-click
 
 | on | you can |

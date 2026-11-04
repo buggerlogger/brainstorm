@@ -45,7 +45,19 @@ export class LiveFeed {
     this.steps = new Map();   // key -> step record, insertion order = time
     this.tools = new Map();   // tool_use_id -> call record
     this.turns = new Map();   // turnId -> turn record
+    this.compacting = null;   // the compaction running now
+    this.compactions = [];    // the ones that ended, newest last
     this.lastAt = 0;          // when the mod last posted (our clock)
+  }
+
+  // A request that never reported its end is closed when something later
+  // proves it is over: a newer request of the same loop, the end of its turn,
+  // or a compaction. The mod sends 'aborted' now, but a claude started before
+  // that mod does not -- and its request stayed "in flight" for good.
+  closeOpen(pred, at, why) {
+    for (const s of this.steps.values()) {
+      if (s.endAt === null && pred(s)) { s.endAt = at; s.stopReason ??= why; }
+    }
   }
 
   ingest({ sessionId = '', events = [] } = {}) {
@@ -68,7 +80,21 @@ export class LiveFeed {
   }
 
   fold(e) {
+    if (e.type === 'compact.start') {
+      this.closeOpen((s) => s.sessionId === e.sessionId && (s.agentId || null) === (e.agentId || null), e.at, 'interrupted');
+      this.compacting = { sessionId: e.sessionId, agentId: e.agentId || null, trigger: e.trigger, messageCount: e.messageCount, instructions: e.instructions || '', startAt: e.at, endAt: null };
+      return;
+    }
+    if (e.type === 'compact.end') {
+      const c = this.compacting && (this.compacting.agentId || null) === (e.agentId || null) ? this.compacting : { sessionId: e.sessionId, agentId: e.agentId || null, trigger: e.trigger, startAt: null };
+      Object.assign(c, { endAt: e.at, skipped: e.skipped ?? null, messagesAfter: e.messageCount ?? null, tokensBefore: e.tokensBefore ?? null, tokensAfter: e.tokensAfter ?? null, usage: e.usage || null });
+      this.compactions.push(c);
+      if (this.compactions.length > 20) this.compactions.shift();
+      if (c === this.compacting) this.compacting = null;
+      return;
+    }
     if (e.type === 'step.start') {
+      this.closeOpen((s) => s.sessionId === e.sessionId && (s.agentId || null) === (e.agentId || null), e.at, 'superseded');
       this.steps.set(this.stepKey(e), {
         key: this.stepKey(e), sessionId: e.sessionId, agentId: e.agentId || null, turnId: e.turnId, step: e.step,
         model: e.model, effort: e.effort ?? null, messageCount: e.messageCount,
@@ -86,6 +112,7 @@ export class LiveFeed {
     if (e.type === 'turn.end') {
       const t = this.turns.get(e.turnId);
       if (t) Object.assign(t, { endAt: e.at, reason: e.reason, durationMs: e.durationMs, usage: e.usage || null });
+      this.closeOpen((s) => s.turnId === e.turnId, e.at, e.reason === 'aborted' ? 'aborted' : 'ended with its turn');
       return;
     }
     if (e.type === 'tool.call') {
@@ -159,6 +186,8 @@ export class LiveFeed {
       steps: [...this.steps.values()].slice(-steps).map(strip),
       tools: [...this.tools.values()].slice(-tools),
       turns: [...this.turns.values()].slice(-20),
+      compacting: this.compacting,
+      compactions: this.compactions.slice(-10),
     };
   }
 
@@ -167,5 +196,7 @@ export class LiveFeed {
     this.steps.clear();
     this.tools.clear();
     this.turns.clear();
+    this.compacting = null;
+    this.compactions = [];
   }
 }

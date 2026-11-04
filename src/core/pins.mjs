@@ -138,7 +138,12 @@ export function stripAllPins(text) {
 }
 
 function pickAnchor(blocks, pin) {
-  const kept = blocks.filter((b) => b.keep !== false);
+  // ⛔ Only blocks claude is SENT. A compacted session still holds the messages
+  // from before its boundary, and "the first user message" used to be one of
+  // them -- MEASURED on a real session: the 11,862-char main context went into
+  // line 4, before two compactions, and never reached claude. Its first user
+  // message now is the one the conversation starts with: the summary.
+  const kept = blocks.filter((b) => b.keep !== false && b.sent !== false);
   if (!kept.length) return null;
   const users = kept.filter((b) => b.role === 'user' && b.kind === 'text');
   if (pin.anchor === 'block' && pin.blockId != null) {

@@ -97,6 +97,26 @@
     L.offset = r.now - Date.now();
     L.seq = r.seq;
     L.data = r;
+    // the server recomputed what claude is sent (a rewind or a /compact in
+    // claude moved messages off the conversation): the tree follows
+    if (L.sentEpoch !== undefined && r.sentEpoch !== L.sentEpoch) {
+      const before = S.state?.totals?.notSent ?? 0;
+      try {
+        S.state = await api('/api/state');
+        renderTree();
+        renderStatus();
+        const now = S.state.totals.notSent ?? 0;
+        status(`the conversation changed in claude (a rewind or a compaction): ${now} block(s) are not sent now${now !== before ? ` (was ${before})` : ''}`);
+      } catch { /* the next poll tries again */ }
+    }
+    L.sentEpoch = r.sentEpoch;
+    // the transcript grew or was compacted since the blocks were made: the tree
+    // offers a refresh (Save & Resume does it by itself)
+    const staleNow = JSON.stringify(r.stale || {});
+    if (L.stale !== undefined && staleNow !== L.stale) {
+      try { S.state = await api('/api/state'); renderTree(); } catch { /* next poll */ }
+    }
+    L.stale = staleNow;
     if (S.following) {
       for (const e of r.events || []) {
         if (e.type === 'tool.call' && e.id && !followed.has(e.id)) {
@@ -205,6 +225,60 @@
     renderEditor();
   }
 
+  /* ------------------------------------------------- one request, in full --- */
+
+  // Everything known about one request, as the API reported it. The cache
+  // numbers are tokens, not text: the API says HOW MUCH came from the cache,
+  // never which words. What it serves is the start of the request that is the
+  // same as one sent before (system prompt, tools, the earlier conversation),
+  // so the request before it says where that shared start ends.
+  function openStep(s) {
+    const r = L.data || { steps: [], tools: [] };
+    const t = now();
+    const prev = [...r.steps].reverse().find((x) => x.sessionId === s.sessionId && (x.agentId || null) === (s.agentId || null) && x.sentAt < s.sentAt) || null;
+    const clock = (ms) => new Date(ms - L.offset).toLocaleTimeString();
+    const pad = (k, v, why = '') => `  ${k.padEnd(16)}${String(v).padStart(10)}${why ? `   ${why}` : ''}`;
+    const u = s.usage;
+    const out = [
+      `request ${s.step + 1} of its turn · ${s.model}${s.effort ? ` · effort ${s.effort}` : ''}${s.agentId ? ` · subagent ${s.agentId}` : ''}`,
+      `sent at ${clock(s.sentAt)} · ${n(s.messageCount)} messages`,
+      s.stopReason ? `ended: ${s.stopReason}` : 'still in flight',
+      '',
+      'phases',
+      ...phases(s, t).map((p) => `  ${p.label.padEnd(24)}${secs(p.to - p.from).padStart(9)}${p.open ? '   (still going)' : ''}`),
+      '',
+      'what the API reported, in tokens',
+      ...(u ? [
+        pad('cache read', n(u.cache_read_input_tokens), 'the start of this request that was the same as before: served from the prompt cache'),
+        pad('cache written', n(u.cache_creation_input_tokens), 'context stored in the cache now, so the next request can read it'),
+        pad('new input', n(u.input_tokens), 'neither read from nor stored in the cache'),
+        pad('output', n(u.output_tokens), 'what the model wrote, thinking included'),
+      ] : ['  (no usage: the request ended before a response, or was refused)']),
+      '',
+      prev
+        ? `the request before it sent ${n(prev.messageCount)} messages; this one ${n(s.messageCount)}. What they share at the start is what the cache served; the ${n(Math.max(0, s.messageCount - prev.messageCount))} after it are new.`
+        : 'the first request seen in this session: nothing before it to compare with.',
+    ];
+    if (s.tools.length) {
+      out.push('', 'tool calls it made');
+      for (const tl of s.tools) {
+        const run = r.tools.find((x) => x.id === tl.id);
+        out.push(`  ${run ? toolLabel(run) : tl.name}${run && run.doneAt !== null ? `   ${secs(run.doneAt - run.startAt)}, ${fmt((run.text || '').length)} ch back` : ''}`);
+      }
+    }
+    if (s.text) out.push('', 'what it wrote', s.text);
+    if (s.thinkingAt !== null && !s.thinkingChars) out.push('', 'thinking: it thought, but Claude Code asks the API to leave the words out');
+    const key = `live:req:${s.key}`;
+    let tab = S.tabs.find((x) => x.key === key);
+    if (!tab) { tab = { key, kind: 'frame', readonly: true }; S.tabs.push(tab); }
+    tab.label = `◉ request ${s.step + 1}`;
+    tab.text = out.join('\n');
+    tab.meta = 'live, from inside claude · the numbers are the API\'s own';
+    S.active = key;
+    renderTabs();
+    renderEditor();
+  }
+
   /* --------------------------------------------------------------- render --- */
 
   function render() {
@@ -251,12 +325,32 @@
     }
 
     const t = now();
+    // A compaction makes its own request, which turn.step never sees: the mod
+    // reports it on its own, start and end.
+    if (r.compacting) {
+      const c = r.compacting;
+      const card = el('div', 'live-card inflight');
+      card.appendChild(el('div', 'live-step', `◌ compacting (${c.trigger === 'manual' ? '/compact' : c.trigger}) · ${n(c.messageCount)} messages · ${secs(t - c.startAt)}`));
+      card.appendChild(el('div', 'live-note small', 'Claude is writing the summary that replaces the conversation. When it is done, everything before it is no longer sent, and moves to "Not sent" in the Explorer.'));
+      frag.appendChild(card);
+    }
+    const lastCompaction = r.compactions?.[r.compactions.length - 1];
+    if (lastCompaction && !r.compacting && t - lastCompaction.endAt < 10 * 60 * 1000) {
+      const c = lastCompaction;
+      frag.appendChild(el('div', 'live-note small', c.skipped
+        ? `compaction ${c.skipped === 'failed' ? 'failed' : `skipped: ${c.skipped}`}`
+        : `compacted (${c.trigger === 'manual' ? '/compact' : c.trigger})${c.startAt ? ` in ${secs(c.endAt - c.startAt)}` : ''}${c.tokensBefore ? ` · ${n(c.tokensBefore)} → ${n(c.tokensAfter)} tokens` : ''}${c.messagesAfter !== null ? ` · ${n(c.messagesAfter)} message(s) after` : ''}`));
+    }
     const cur = r.current;
     const shown = cur || r.steps[r.steps.length - 1];
     if (shown) {
       const card = el('div', `live-card${cur ? ' inflight' : ''}`);
       const title = el('div', 'live-step');
-      title.textContent = `${cur ? '▶ in flight' : '■ last request'} · request ${shown.step + 1} of its turn${shown.agentId ? ` · subagent ${String(shown.agentId).slice(0, 8)}` : ''} · ${shown.model}${shown.effort ? ` · effort ${shown.effort}` : ''} · ${n(shown.messageCount)} messages sent`;
+      const ended = !cur && shown.stopReason && !['end_turn', 'tool_use', 'stop_sequence', 'max_tokens'].includes(shown.stopReason) ? ` · ${shown.stopReason}` : '';
+      title.textContent = `${cur ? '▶ in flight' : '■ last request'}${ended} · request ${shown.step + 1} of its turn${shown.agentId ? ` · subagent ${String(shown.agentId).slice(0, 8)}` : ''} · ${shown.model}${shown.effort ? ` · effort ${shown.effort}` : ''} · ${n(shown.messageCount)} messages sent`;
+      title.title = 'click: everything about this request';
+      title.classList.add('clickable');
+      title.addEventListener('click', () => { B.pauseAutoJump?.(); openStep(shown); });
       card.appendChild(title);
       for (const x of bar(shown, t)) card.appendChild(x);
       const u = usageLine(shown.usage);
@@ -293,9 +387,8 @@
           // a request that ended without usage (a refusal the engine then retried,
           // an error) says how it ended instead
           meta: s.usage ? `${fmt(s.usage.cache_read_input_tokens || 0)} cached · ${fmt(s.usage.output_tokens || 0)} out` : (s.stopReason || ''),
-          onClick: () => {
-            if (s.tools[0]) { B.pauseAutoJump?.(); openTool(s.tools[0].id); }
-          },
+          // every request opens: what was sent, the phases, what the cache served
+          onClick: () => { B.pauseAutoJump?.(); openStep(s); },
         }));
         frag.lastChild.title = `request ${s.step + 1}: ${ps.join(' · ')}${s.stopReason ? ` · stopped: ${s.stopReason}` : ''}`;
       }
@@ -314,4 +407,5 @@
 
   B.live = () => L.data;
   B.openLiveTool = openTool;
+  B.openLiveStep = openStep;
 })();

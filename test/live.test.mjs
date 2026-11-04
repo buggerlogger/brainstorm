@@ -192,6 +192,14 @@ try {
     check(adopt.data.reused === true && adopt.data.tag === 'feedf00d', 'the running window is adopted', JSON.stringify(adopt.data));
     const again = await api('/api/window', { action: 'open' });
     check(again.data.reused === true && again.data.tag === 'feedf00d', 'an explicit open of the same session adopts it too, instead of a second claude', JSON.stringify(again.data));
+    // the adopted window runs in another folder than the session's own: a
+    // switch of it to this session must be refused, not resumed where claude
+    // cannot find the session
+    let refused = '';
+    try { await api('/api/window', { action: 'resume', tag: 'feedf00d', sessionId: sid }); } catch { /* status below */ }
+    const rr = await fetch(`${BASE}/api/window`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'resume', tag: 'feedf00d', sessionId: sid }) });
+    refused = (await rr.json()).error || '';
+    check(/runs in .* belongs to/.test(refused), 'a terminal in another folder is not switched to this session', refused.slice(0, 120));
     const others = readdirSync(wdir).filter((f) => f.endsWith('.meta.json') && !f.startsWith('feedf00d'));
     check(others.length === 0, 'no new window was created', others.join(', '));
 

@@ -115,21 +115,53 @@ export const register: Register = (on) => {
     send($, { type: 'step.start', ...step, model: e.model, effort: e.effort, messageCount: e.messageCount })
     const stream = next(e)
     let first = true
-    for await (const c of stream) {
-      if (first) {
-        first = false
-        send($, { type: 'step.first', ...step })
+    let r: Awaited<typeof stream.result> | null = null
+    // ⛔ The end is sent in finally: a request cut off (Esc, a /compact typed
+    // over it, an error) never reached the line after the loop, and stayed
+    // "in flight" in the Live panel for good -- measured: 109.6 s and counting.
+    try {
+      for await (const c of stream) {
+        if (first) {
+          first = false
+          send($, { type: 'step.first', ...step })
+        }
+        if (c.kind === 'thinking') send($, { type: 'thinking', ...step, block: c.index, text: c.text })
+        else if (c.kind === 'text') send($, { type: 'text', ...step, block: c.index, text: c.text })
+        else if (c.kind === 'tool') send($, { type: 'tool.begin', ...step, block: c.index, id: c.id, name: c.name })
+        else if (c.kind === 'input') send($, { type: 'tool.input', ...step, block: c.index, json: c.json })
+        else if (c.kind === 'stop') send($, { type: 'step.stop', ...step, stopReason: c.stopReason, usage: c.usage })
+        yield c
       }
-      if (c.kind === 'thinking') send($, { type: 'thinking', ...step, block: c.index, text: c.text })
-      else if (c.kind === 'text') send($, { type: 'text', ...step, block: c.index, text: c.text })
-      else if (c.kind === 'tool') send($, { type: 'tool.begin', ...step, block: c.index, id: c.id, name: c.name })
-      else if (c.kind === 'input') send($, { type: 'tool.input', ...step, block: c.index, json: c.json })
-      else if (c.kind === 'stop') send($, { type: 'step.stop', ...step, stopReason: c.stopReason, usage: c.usage })
-      yield c
+      r = await stream.result
+      return r
+    } finally {
+      send($, { type: 'step.end', ...step, stopReason: r ? r.stopReason : 'aborted', usage: r ? r.usage : null })
     }
-    const r = await stream.result
-    send($, { type: 'step.end', ...step, stopReason: r.stopReason, usage: r.usage })
-    return r
+  })
+
+  // A compaction makes its own model request, outside turn.step -- measured:
+  // a /compact sent no turn.step at all, only this (35 s, 47,741 -> 15,602
+  // tokens, 2 messages left). This is how the panel knows.
+  on('session.compact', async ($, e, next) => {
+    if (e.trigger === 'precompute') return next(e)   // installs nothing
+    const base = { trigger: e.trigger, agentId: e.agentId }
+    send($, { type: 'compact.start', ...base, messageCount: e.messages.length, instructions: clip(e.instructions ?? '') })
+    type Compacted = { skip?: string; messages?: readonly unknown[]; tokensBefore?: number; tokensAfter?: number; usage?: unknown }
+    let done: Compacted | null = null
+    try {
+      const r = await next(e)
+      done = r as unknown as Compacted
+      return r
+    } finally {
+      send($, {
+        type: 'compact.end', ...base,
+        skipped: done ? done.skip ?? null : 'failed',
+        messageCount: done?.messages?.length ?? null,
+        tokensBefore: done?.tokensBefore ?? null,
+        tokensAfter: done?.tokensAfter ?? null,
+        usage: done?.usage ?? null,
+      })
+    }
   })
 
   on('tool.call', async ($, e, next) => {

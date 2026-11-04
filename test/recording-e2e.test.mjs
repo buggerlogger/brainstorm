@@ -195,6 +195,20 @@ try {
   }
   check(ended.includes('last request') && ended.includes('cache written 41,414'), 'when it ends: the usage the API reported', (ended.match(/cache read.{0,80}/) || [''])[0]);
 
+  step('a request opens in full; a /compact shows while it runs');
+  await ev(`document.querySelector('#live .live-step.clickable').click(); true`);
+  const reqTab = await ev(`(S.tabs.find((t) => t.key === S.active) || {}).text || ''`);
+  check(reqTab.includes('what the API reported') && reqTab.includes('cache written') && reqTab.includes('41,414') && reqTab.includes('phases'), 'clicking the request opens everything about it: phases, and what the cache served', reqTab.split('\n')[0]);
+  // what the mod sends for a /compact (measured: no turn.step, only these)
+  await api('/api/hook', { sessionId: 'e2e', events: [{ type: 'compact.start', at: Date.now(), trigger: 'manual', messageCount: 38 }] });
+  let compacting = '';
+  for (let i = 0; i < 20 && !compacting.includes('compacting'); i++) { compacting = await ev(`document.querySelector('#live').textContent`); await sleep(300); }
+  check(/compacting \(\/compact\) · 38 messages/.test(compacting), 'a /compact shows as compacting, with how many messages', (compacting.match(/compacting.{0,40}/) || [''])[0]);
+  await api('/api/hook', { sessionId: 'e2e', events: [{ type: 'compact.end', at: Date.now(), trigger: 'manual', skipped: null, messageCount: 2, tokensBefore: 47741, tokensAfter: 15602 }] });
+  let compacted = '';
+  for (let i = 0; i < 20 && !compacted.includes('compacted'); i++) { compacted = await ev(`document.querySelector('#live').textContent`); await sleep(300); }
+  check(/compacted \(\/compact\).*47,741 → 15,602 tokens/.test(compacted), 'and when it ends: the tokens before and after', (compacted.match(/compacted.{0,70}/) || [''])[0]);
+
   step('auto-jump can be stopped');
   await ev(`brainstorm.setFollow(true, false)`);
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);

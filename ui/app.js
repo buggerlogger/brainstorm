@@ -137,6 +137,20 @@ function renderTree() {
     });
     mainNode.title = 'Text here survives a rewind: it is pinned into the first user message and goes back in on every build and after every rewind.';
     frag.appendChild(mainNode);
+    // claude moved on since these blocks were made: say so where the blocks are
+    const stale = S.state.stale || {};
+    if (stale.compacted || stale.grew) {
+      const sn = node({
+        depth: 1, icon: '⟳', iconCls: 'pin',
+        label: stale.compacted
+          ? 'claude compacted since you opened this: refresh to see and edit the new summary'
+          : 'the transcript has newer messages: refresh to edit them',
+        cls: 'stale',
+        onClick: () => refreshBlocks(),
+      });
+      sn.title = 'Save & Resume refreshes by itself first; this lets you see and edit them now';
+      frag.appendChild(sn);
+    }
     for (const g of S.state.groups) {
       const key = `g:${g.name}`;
       const open = S.expanded.has(key);
@@ -1275,7 +1289,21 @@ $('#pin-add').addEventListener('click', () => editPin('new'));
 $('#pin-save').addEventListener('click', savePin);
 $('#pin-cancel').addEventListener('click', () => { S.editingPin = null; $('#pin-edit').hidden = true; renderPins(); });
 $('#pin-delete').addEventListener('click', deletePin);
-$('#btn-refresh').addEventListener('click', loadProjects);
+// ⟳: the blocks from the transcript as it is now, edits kept. A /compact or
+// a rewind in claude since the session was opened shows up here -- the new
+// summary of a compaction is no block to edit until then.
+async function refreshBlocks() {
+  if (!S.state?.open) { loadProjects(); return; }
+  try {
+    status('refreshing the blocks from the transcript…');
+    const r = await api('/api/refresh', {});
+    S.state = r.state;
+    renderAll();
+    termWrite(`$ refresh  -> ${r.before} -> ${r.after} blocks, ${r.carried.length} edit(s) carried${r.lost.length ? `, ${r.lost.length} could not be: their messages are no longer in the conversation` : ''}`, r.lost.length ? 'err' : 'ok');
+    status(`refreshed: ${r.after} blocks from the transcript as it is now`);
+  } catch (err) { status(err.message, 'err'); }
+}
+$('#btn-refresh').addEventListener('click', refreshBlocks);
 $('#btn-save').addEventListener('click', save);
 $('#btn-build').addEventListener('click', () => build(false));
 $('#btn-install').addEventListener('click', () => build(true));

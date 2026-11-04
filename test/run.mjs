@@ -130,6 +130,8 @@ run("recorder: double start + overlapping ticks", "recorder-concurrency.test.mjs
 run("live hooks: feed, live.json, adopting a terminal", "live.test.mjs");
 run("main context: survives a rewind, paused by a compaction", "pins.test.mjs");
 run("build rules: never an empty message; a dropped call takes its result", "build-rules.test.mjs");
+run("after a rewind or a /compact in claude: what is sent, where pins go", "rewind-compact.test.mjs");
+run("the Live feed through a /compact; requests that never ended", "live-compact.test.mjs");
 
 // 3. everything that needs a server
 if (ALL) {
@@ -152,6 +154,7 @@ if (ALL) {
   run('the REAL claude in the session window', 'real-claude-window.test.mjs');
   run('skill swap (two real claude sessions)', 'skillswap.test.mjs');
   run('the whole loop with a real claude: edit, Save & Resume, ask, task, twice', 'real-flow.test.mjs');
+  run('editing a COMPACTED context with a real claude, compacted twice', 'real-compact.test.mjs');
 }
 
 // 4. the packaged exe
