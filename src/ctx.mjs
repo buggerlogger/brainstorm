@@ -29,7 +29,7 @@
 //     there is nowhere for a stale copy to hide.
 //
 //  2. --install-to DOUBLE-ENCODED THE PATH. Given a projects directory it
-//     produced C--Users-ASOO-.claude-projects-C--Users-... and installed into a
+//     produced C--Users-me-.claude-projects-C--Users-... and installed into a
 //     folder Claude Code will never look in. It wants a CWD. Here the flag is
 //     --install, the cwd comes from the session's own record, and the derived
 //     path is printed and checked before anything is written.
@@ -106,12 +106,12 @@ function die(msg, code = 2) {
 // flattened to a dash.
 //
 // ⛔ VERIFIED against two real folders rather than guessed, because getting it
-// wrong installs a session somewhere nothing will ever read:
+// wrong installs a session somewhere nothing will ever read (names changed):
 //
-//   C:\Users\ASOO\Desktop\my-work\ctf challenge
-//     -> C--Users-ASOO-Desktop-my-work-ctf-challenge        (space becomes -)
-//   C:\Users\ASOO\AppData\Local\Temp\claude\...\scratchpad\ctxtest
-//     -> C--Users-ASOO-AppData-Local-Temp-claude-...-scratchpad-ctxtest
+//   C:\Users\me\Desktop\work\my project
+//     -> C--Users-me-Desktop-work-my-project                (space becomes -)
+//   C:\Users\me\AppData\Local\Temp\claude\...\scratchpad\ctxtest
+//     -> C--Users-me-AppData-Local-Temp-claude-...-scratchpad-ctxtest
 //
 // Dots survive (`.claude` stays `.claude`) and existing dashes survive, so the
 // rule is: anything outside [A-Za-z0-9._-] becomes a dash.

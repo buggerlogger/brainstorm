@@ -549,8 +549,9 @@ function windowLaunch(settings) {
 // ⛔ claude --resume finds a session by the folder it runs in, and a session
 // window runs in the folder it was opened in. Switching a window to a session
 // from ANOTHER folder started claude where that session cannot be found --
-// measured: the app's open terminal was in ctxtest-skill, and Save & Resume of
-// a C:\Users\ASOO session would have resumed it there. A window is only reused
+// measured: the app's open terminal was in one project folder, and Save &
+// Resume of a session from the home folder would have resumed it there. A
+// window is only reused
 // for a session of its own folder.
 const normDir = (d) => String(d || '').replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase();
 const sameDir = (a, b) => !!a && !!b && normDir(a) === normDir(b);

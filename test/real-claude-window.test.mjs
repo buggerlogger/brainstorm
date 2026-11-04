@@ -42,12 +42,14 @@ async function waitFor(pred, ms = 40000) {
   return null;
 }
 
-// Two real sessions from one project folder, so --resume finds both.
-const cwd = join(homedir(), 'Desktop', 'my-work', 'ctxtest-skill');
-const proj = join(homedir(), '.claude', 'projects', cwd.replace(/[:\\/.]/g, '-'));
-const ids = existsSync(proj) ? readdirSync(proj).filter((f) => f.endsWith('.jsonl')).map((f) => f.replace(/\.jsonl$/, '')).slice(0, 2) : [];
+// Two real sessions from one project folder, so --resume finds both. The
+// folder is yours to name: this repo names nobody's folders or sessions, so
+// without BRAINSTORM_TEST_CWD (a trusted folder holding two sessions) it skips.
+const cwd = process.env.BRAINSTORM_TEST_CWD || '';
+const proj = cwd ? join(homedir(), '.claude', 'projects', cwd.replace(/[:\\/.]/g, '-')) : '';
+const ids = proj && existsSync(proj) ? readdirSync(proj).filter((f) => f.endsWith('.jsonl')).map((f) => f.replace(/\.jsonl$/, '')).slice(0, 2) : [];
 if (ids.length < 2 || !existsSync(cwd)) {
-  console.log(`  SKIP  need two sessions under ${proj}`);
+  console.log(`  SKIP  set BRAINSTORM_TEST_CWD to a trusted folder with two claude sessions${cwd ? ` (found ${ids.length} under ${proj})` : ''}`);
   process.exit(0);
 }
 const [A, B] = ids;

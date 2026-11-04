@@ -3,14 +3,14 @@
 ```
 ┌─ titlebar ────────────────── session id — cwd ──── Save · Build · Build&Install ─┐
 │ A │ EXPLORER / DEBUGGER / FIND / CHAT │ tabs: #5 text · 0/2 system (read only)   │
-│ C │  ▾ aaaa2222            6 blocks   ├──────────────────────────────────────────┤
+│ C │  ▾ 0f1e2d3c            6 blocks   ├──────────────────────────────────────────┤
 │ T │    ▾ User messages           2    │  1  Base directory for this skill: ...   │
 │ I │      #1 Invoke the alpha-...104   │  2                                       │
 │ V │      #5 Base directory ...   456  │  3  # ALPHA Protocol                     │
 │ I │    ▸ Assistant messages      2    │  4                                       │
 │ T │    ▸ Tool calls              1    │  5  You are operating under ...          │
 │ Y │  SESSIONS                         │                                          │
-│   │  ▸ ctf challenge            55    │                                          │
+│   │  ▸ my-project               55    │                                          │
 ├───┴───────────────────────────────────┴──────────────────────────────────────────┤
 │ TERMINAL │ FLOW │ PROBLEMS │ OUTPUT                                              │
 │ $ flow source  -> 2 call(s), 57 frames                                           │

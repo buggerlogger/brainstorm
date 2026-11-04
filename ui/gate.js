@@ -232,8 +232,8 @@
       if (opening) return;
       // ⛔ Search waits 120 ms after the last keystroke. Pressing Enter inside
       // that window used to open the selected row of the PREVIOUS list --
-      // MEASURED: typing 19f1949b and pressing Enter opened e87c0c1c, the top
-      // "Recent" row of the empty-query list. Enter acts on results for what
+      // MEASURED: typing one session's id and pressing Enter opened another,
+      // the top "Recent" row of the empty-query list. Enter acts on results for what
       // is in the box now: if those are not on screen yet, search first.
       const q = e.target.value;
       if (rowsFor !== q.trim().toLowerCase() && rowsFor !== q) {

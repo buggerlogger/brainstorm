@@ -43,7 +43,7 @@ export class SessionWatcher {
     // in, while `dir` follows whichever session is open -- so after opening
     // a second session, claude run in the terminal wrote to a project the
     // watcher was not looking at, and nothing was detected (measured: the
-    // watcher on google-search, claude running in ctxtest-skill).
+    // watcher on one project folder, claude running in another).
     this.alsoDirs = new Set();
     this.seen = new Map();      // file -> { size, mtimeMs, calls, toolCalls }
     this.events = [];
