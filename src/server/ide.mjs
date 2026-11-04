@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, rmSync, m
 import { join, dirname, extname, basename } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 import { IS_SEA, VERSION, engineCommand, readUi, appDataDir, liveModDir, liveFile } from '../runtime.mjs';
 import { loadSettings, saveSettings, rememberRecent, SCHEMA, settingsFile } from '../core/settings.mjs';
@@ -799,6 +800,24 @@ const routes = {
   // --- the session window (claude runs here; Save & Resume restarts it) -----
 
   'GET /api/windows': () => ({ windows: listWindows() }),
+
+  // Create session: a terminal running a NEW claude in a folder. The id is
+  // chosen here (claude --session-id), so the start gate knows which
+  // transcript to wait for -- claude writes it with the first message -- and
+  // opening it later adopts this window instead of starting a second claude.
+  'POST /api/create-session': (body) => {
+    // a folder typed wrong is an answer, not a server failure: ok:false, not a 500
+    const cwd = String(body.cwd || '').trim().replace(/^"(.*)"$/, '$1');
+    if (!cwd) return { ok: false, error: 'create the session in which folder?' };
+    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return { ok: false, error: `no such folder: ${cwd}` };
+    const settings = loadSettings();
+    const launch = windowLaunch(settings);
+    const sessionId = randomUUID();
+    const w = openSessionWindow({ sessionId, cwd, fresh: true, ...launch });
+    recentOpen = { sessionId, tag: w.tag, at: Date.now() };
+    logLine(`window ${w.tag}: new claude session ${sessionId} in ${cwd}${launch.plugins.length ? ' (live hooks)' : ''}`);
+    return { ok: true, sessionId, cwd, tag: w.tag, live: launch.plugins.length > 0 };
+  },
 
   'POST /api/window': (body) => {
     const action = body.action || 'open';

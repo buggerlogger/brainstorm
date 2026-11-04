@@ -49,6 +49,7 @@
   function hide() {
     $('#gate').hidden = true;
     document.body.classList.remove('gated');
+    closeNew();
   }
 
   async function search(q) {
@@ -246,6 +247,84 @@
       }
     }
     else if (e.key === 'Escape') { e.preventDefault(); if (!opening) hide(); }
+  });
+
+  // --- Reload list, Create session -------------------------------------------
+  // Create session starts a NEW claude in a terminal, with an id the server
+  // chose. claude writes the transcript with the first message, so the gate
+  // waits for that id to appear and then opens it -- which adopts the
+  // terminal, because that window's claude is running exactly that id.
+  let newWait = null;   // { sessionId, timer, tick }
+
+  function openNew() {
+    $('#gate-new').hidden = false;
+    $('#gate-new-err').hidden = true;
+    // the folders claude has been used in, from the list on screen
+    const dirs = [...new Set(rows.map((r) => r.cwd).filter(Boolean))];
+    $('#gate-new-dirs').replaceChildren(...dirs.map((d) => { const o = document.createElement('option'); o.value = d; return o; }));
+    const inp = $('#gate-new-cwd');
+    if (!inp.value && dirs[0]) inp.value = dirs[0];
+    inp.focus();
+    inp.select();
+  }
+
+  function stopWaiting() {
+    if (newWait) { clearInterval(newWait.timer); clearInterval(newWait.tick); newWait = null; }
+    $('#gate-new-wait').hidden = true;
+    $('#gate-new-start').disabled = false;
+  }
+
+  function closeNew() {
+    stopWaiting();
+    $('#gate-new').hidden = true;
+  }
+
+  async function startNew() {
+    if (newWait || opening) return;
+    const cwd = $('#gate-new-cwd').value.trim();
+    $('#gate-new-err').hidden = true;
+    $('#gate-new-start').disabled = true;
+    let r;
+    try {
+      r = await api('/api/create-session', { cwd });
+    } catch (err) {
+      r = { ok: false, error: err.message };
+    }
+    if (!r.ok) {
+      $('#gate-new-err').textContent = r.error;
+      $('#gate-new-err').hidden = false;
+      $('#gate-new-start').disabled = false;
+      return;
+    }
+    termWrite(`[terminal window ${r.tag}: new claude session ${r.sessionId} in ${r.cwd}${r.live ? ' · live hooks on' : ''}]`, 'sys');
+    $('#gate-new-msg').textContent = `claude is starting in a new terminal in ${r.cwd}. Type your first message there: the session opens here as soon as claude saves it.`;
+    $('#gate-new-wait').hidden = false;
+    const t0 = Date.now();
+    const w = { sessionId: r.sessionId };
+    newWait = w;
+    const tick = () => { $('#gate-new-time').textContent = `waiting ${Math.round((Date.now() - t0) / 1000)} s · session ${r.sessionId.slice(0, 8)}`; };
+    tick();
+    w.tick = setInterval(tick, 1000);
+    w.timer = setInterval(async () => {
+      let f;
+      try { f = await api(`/api/find-sessions?q=${encodeURIComponent(w.sessionId)}&limit=5`); } catch { return; }
+      const hit = (f.results || []).find((x) => x.id === w.sessionId);
+      if (!hit || newWait !== w) return;
+      closeNew();
+      await openPath(hit.path, true);
+    }, 1500);
+  }
+
+  $('#gate-reload').addEventListener('click', () => {
+    $('#gate-count').textContent = 'reloading…';
+    search($('#gate-q').value);
+  });
+  $('#gate-create').addEventListener('click', openNew);
+  $('#gate-new-start').addEventListener('click', startNew);
+  $('#gate-new-cancel').addEventListener('click', closeNew);
+  $('#gate-new-cwd').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); startNew(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeNew(); $('#gate-q').focus(); }
   });
 
   $('#btn-gate').addEventListener('click', show);

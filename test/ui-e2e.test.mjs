@@ -150,6 +150,48 @@ try {
   const total = await cdp.eval(`document.querySelector('#gate-count').textContent`);
   console.log(`    ${total}`);
 
+  step('the start gate: Reload list, Create session');
+  await cdp.eval(`document.querySelector('#gate-reload').click()`);
+  check(await waitFor(cdp, `/match/.test(document.querySelector('#gate-count').textContent) && document.querySelectorAll('#gate-list .gate-row').length > 0`), 'Reload list reads the sessions again');
+  await cdp.eval(`document.querySelector('#gate-create').click()`);
+  check(await waitFor(cdp, `!document.querySelector('#gate-new').hidden && document.activeElement === document.querySelector('#gate-new-cwd')`), 'Create session asks for a folder');
+  check(await cdp.eval(`document.querySelectorAll('#gate-new-dirs option').length > 0 && document.querySelector('#gate-new-cwd').value.length > 0`), 'and suggests the folders claude has been used in');
+  // a folder that does not exist is refused before any terminal opens
+  await cdp.eval(`(()=>{ document.querySelector('#gate-new-cwd').value = 'Z:\\\\no\\\\such\\\\folder\\\\here'; document.querySelector('#gate-new-start').click(); })()`);
+  check(await waitFor(cdp, `!document.querySelector('#gate-new-err').hidden && /no such folder/.test(document.querySelector('#gate-new-err').textContent)`), 'a folder that does not exist is refused, and says so', await cdp.eval(`document.querySelector('#gate-new-err').textContent`));
+  check(await cdp.eval(`document.querySelector('#gate-new-wait').hidden`), 'and nothing is waiting for a session');
+  await cdp.eval(`document.querySelector('#gate-new-cancel').click()`);
+  check(await waitFor(cdp, `document.querySelector('#gate-new').hidden`), 'Cancel closes it');
+
+  step('the guide: blurred, one thing to click');
+  // real mouse events, so the hole is tested as a person meets it: a click in
+  // it reaches the button under it, a click anywhere else lands on the shade
+  const centre = (sel) => cdp.eval(`(()=>{ const r=document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  const mouseClick = async ({ x, y }) => {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+  };
+  check(await cdp.eval(`document.querySelector('#guide').hidden`), 'a page that is not the app\'s own window does not start it by itself');
+  await cdp.eval(`brainstorm.guide.start('first')`);
+  check(await waitFor(cdp, `!document.querySelector('#guide').hidden && document.querySelector('#guide-title').textContent === 'Welcome to brainstorm'`), 'the welcome card');
+  check(await cdp.eval(`getComputedStyle(document.querySelector('#guide-shade')).backdropFilter.includes('blur')`), 'everything behind it is blurred');
+  await cdp.eval(`[...document.querySelectorAll('#guide-actions button')].find((b)=>b.textContent==='Start').click()`);
+  check(await waitFor(cdp, `document.querySelector('#guide-title').textContent === 'Create a session'`), 'Start: the first step points at Create session');
+  const ringOk = await cdp.eval(`(()=>{ const a=document.querySelector('#gate-create').getBoundingClientRect(), b=document.querySelector('#guide-ring').getBoundingClientRect();
+    return !document.querySelector('#guide-ring').hidden && b.left <= a.left && b.top <= a.top && b.right >= a.right && b.bottom >= a.bottom && b.width < a.width + 30; })()`);
+  check(ringOk, 'the ring is around that button, and only that button');
+  const gateCountBefore = await cdp.eval(`document.querySelector('#gate-count').textContent`);
+  await mouseClick(await centre('#gate-reload'));
+  await sleep(300);
+  check(await cdp.eval(`document.querySelector('#gate-count').textContent`) === gateCountBefore, 'a click outside the hole (on Reload list) does nothing', gateCountBefore);
+  await mouseClick(await centre('#gate-create'));
+  check(await waitFor(cdp, `!document.querySelector('#gate-new').hidden`), 'a click in the hole reaches the button: the folder form opens');
+  check(await waitFor(cdp, `document.querySelector('#guide-title').textContent === 'Pick the folder'`), 'and the guide moves on by itself');
+  await cdp.eval(`[...document.querySelectorAll('#guide-actions button')].find((b)=>b.textContent==='Skip guide').click()`);
+  check(await waitFor(cdp, `document.querySelector('#guide').hidden`), 'Skip guide closes it');
+  check(await waitFor(cdp, `fetch('/api/settings').then((r)=>r.json()).then((r)=>r.settings.showGuide === false)`), 'and it will not start by itself again');
+  await cdp.eval(`document.querySelector('#gate-new-cancel').click()`);
+
   step('type in the gate and open a session');
   // Pick a modest session through the API so the test does not depend on
   // which sessions happen to be newest.

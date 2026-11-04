@@ -62,7 +62,13 @@ writeFileSync(stub, [
   'ping -n 600 127.0.0.1 > nul',
 ].join('\r\n'));
 
+// a third, for Create session's fresh start
+const argLog3 = join(work, 'stub3-args.log');
+const stub3 = join(work, 'fake-claude-3.cmd');
+writeFileSync(stub3, ['@echo off', `echo %* >> "${argLog3}"`, 'ping -n 600 127.0.0.1 > nul'].join('\r\n'));
+
 let tag = null;
+let tag2 = null;
 try {
   step('open a session window whose claude is the stub');
   const w = openSessionWindow({ sessionId: 'AAA-session', cwd: work, claude: stub, plugins: [pluginDir], env: { BRAINSTORM_LIVE: join(work, 'live.json') } });
@@ -132,11 +138,27 @@ try {
   check(!!gone, 'the window\'s process is gone', `runner ${runnerPid}`);
   const lines2 = readFileSync(argLog, 'utf8').split(/\r?\n/).filter(Boolean);
   check(lines2.length === 2, 'stopping did not start a third session');
+
+  step('Create session: a NEW claude first, then resumes like any other');
+  // the start gate's Create session: brainstorm picks the id, claude starts
+  // the session with it, and every start after that (Save & Resume) resumes
+  const w2 = openSessionWindow({ sessionId: 'NEW-session', cwd: work, claude: stub3, fresh: true });
+  tag2 = w2.tag;
+  const fresh = await waitFor(() => existsSync(argLog3) && readFileSync(argLog3, 'utf8').includes('--session-id NEW-session'));
+  check(!!fresh, 'the first start is claude --session-id NEW-session');
+  check(!readFileSync(argLog3, 'utf8').includes('--resume NEW-session'), 'not --resume: that session does not exist yet');
+  await waitFor(() => listWindows().find((x) => x.tag === tag2)?.claudePid);
+  resumeInWindow(tag2, 'BUILT-session');
+  const resumed = await waitFor(() => readFileSync(argLog3, 'utf8').includes('--resume BUILT-session'));
+  check(!!resumed, 'after a switch it resumes: --resume BUILT-session');
+  check(!readFileSync(argLog3, 'utf8').includes('--session-id BUILT-session'), 'and never --session-id again');
+  stopWindow(tag2, { close: true });
 } catch (err) {
   console.error(`\n  ERROR  ${err.stack || err.message}`);
   failures++;
 } finally {
   if (tag) { try { stopWindow(tag, { close: true }); } catch { /* already stopped */ } }
+  if (tag2) { try { stopWindow(tag2, { close: true }); } catch { /* already stopped */ } }
   console.log(`\n  runner log:\n${windowLog(tag || '').split(/\r?\n/).filter(Boolean).map((l) => `    ${l}`).join('\n')}`);
 }
 

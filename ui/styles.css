@@ -419,6 +419,54 @@ body.gated .titlebar, body.gated .shell, body.gated .panel, body.gated .statusba
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 
+/* ---------- start gate: Reload list, Create session ---------- */
+.gate-head .btn { flex: none; }
+.gate-new { display: flex; flex-direction: column; gap: 8px; padding: 4px 16px 10px; }
+.gate-new .row { display: flex; align-items: center; }
+.gate-new .input { flex: 1; font-size: 13px; padding: 6px 8px; }
+.gate-new-wait { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.gate-new-wait .spinner { width: 18px; height: 18px; border-width: 2px; flex: none; }
+.gate-new-err { color: var(--red); }
+.gate-new[hidden], .gate-new-wait[hidden], .gate-new-err[hidden] { display: none; }
+
+/* ---------- the guide: everything blurred but the one thing to use ---------- */
+/* The layer itself takes no clicks; the shade does, except in its hole
+   (clip-path), so a click there reaches the real button underneath. */
+.guide { position: fixed; inset: 0; z-index: 1000; pointer-events: none; }
+.guide[hidden], .guide-ring[hidden] { display: none; }
+.guide-shade {
+  position: absolute; inset: 0; pointer-events: auto;
+  background: rgba(0, 0, 0, .5);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+}
+.guide-ring {
+  position: absolute; pointer-events: none; border-radius: 8px;
+  border: 2px solid var(--focus);
+  box-shadow: 0 0 0 4px rgba(0, 120, 212, .35);
+  animation: guide-pulse 1.6s ease-in-out infinite;
+}
+@keyframes guide-pulse { 50% { box-shadow: 0 0 0 10px rgba(0, 120, 212, .08); } }
+@media (prefers-reduced-motion: reduce) { .guide-ring { animation: none; } }
+.guide-card {
+  position: absolute; pointer-events: auto;
+  width: min(420px, calc(100vw - 32px));
+  background: var(--bg-elev); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px 12px;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, .5);
+}
+.guide-step { font-size: 10px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .07em; min-height: 12px; }
+.guide-title { font-size: 16px; font-weight: 600; color: var(--fg-bright); margin: 2px 0 8px; }
+.guide-text { font-size: 13px; line-height: 1.5; }
+.guide-text p { margin: 0 0 8px; }
+.guide-example {
+  margin: 0 0 8px; padding: 6px 10px; border-radius: 6px;
+  background: var(--bg-input); font-family: var(--mono); font-size: 12px;
+  white-space: pre-wrap; color: var(--fg-bright);
+}
+.guide-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.guide-actions .skip { margin-right: auto; }
+
 /* ---------- modal: the rewind warning ---------- */
 .modal {
   position: fixed; inset: 0; z-index: 110;

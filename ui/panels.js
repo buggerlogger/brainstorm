@@ -409,6 +409,7 @@
       const mt = S.tabs.find((x) => x.kind === 'main');
       if (mt && r.state?.main) mt.meta = mainMeta(r.state.main);
       renderAll();
+      B.onSaveResumed?.(r);   // the guide waits for this
       renderProblems({ ok: true, summary: r.summary, out: r.out, diff: [] });
       const w = r.window;
       if (w) {

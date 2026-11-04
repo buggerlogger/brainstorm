@@ -54,6 +54,8 @@ the latest release instead, checked against the digest GitHub publishes.
 - **Save & Resume**: build, verify, install, and restart claude in the same
   window. The build refuses what the API would refuse.
 - **Agents**: subagents and forks, and who read what.
+- **A guide for the first time**: everything blurred but the one button to
+  click, step by step, from a new session to claude answering with your edit.
 
 ## Only the live view, in any claude
 
@@ -87,7 +89,12 @@ Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 1. **Start.** The app opens blurred, asking for a session. Type an id, an id
    prefix, a folder, or words from the first prompt — matches rank in that
-   order. Recent sessions come first.
+   order. Recent sessions come first. **Create session** starts a new claude
+   in a folder you pick and opens its session as soon as claude saves it;
+   **Reload list** reads the sessions again. On the very first start a
+   **guide** walks you through a first edit, one highlighted button at a time
+   (the **Guide** button in the title bar opens it again, with guides for
+   after a `/compact` and for making claude forget a rule).
 2. **Run.** Leave *open a terminal* ticked and a real terminal window opens in
    the session's folder running `claude --resume <id>`, with a genuine TTY.
 3. **Watch.** Each API call claude makes is a *jump*. With **follow** on, the

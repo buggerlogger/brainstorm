@@ -27,6 +27,7 @@
     <button class="btn" id="btn-build" title="Build a session with your edits">Build</button>
     <button class="btn" id="btn-install" title="Build and install so it can be resumed">Build &amp; Install</button>
     <button class="btn primary" id="btn-save-resume" title="Save, build, install, and restart claude on the edited session in the same terminal window (Ctrl+Shift+S)">Save &amp; Resume ⟳</button>
+    <button class="btn ghost" id="btn-guide" title="The step-by-step guide: a first edit, after a /compact, forgetting a rule">? Guide</button>
     <button class="btn ghost" id="btn-theme" title="Toggle theme">◐</button>
   </div>
 </header>
@@ -309,6 +310,25 @@
       <img class="logo" src="icon.png" alt="">
       <span id="gate-title">Open a session</span>
       <span class="muted small" id="gate-count"></span>
+      <button class="btn sm" id="gate-reload" title="Read the list of sessions again">⟳ Reload list</button>
+      <button class="btn sm primary" id="gate-create" title="Start a new claude session in a folder">＋ Create session</button>
+    </div>
+    <!-- Create session: a new claude in a folder; the session opens by itself once claude saves it -->
+    <div class="gate-new" id="gate-new" hidden>
+      <div class="small">A terminal opens with a new claude in this folder. Type your first message there:
+        brainstorm opens the session as soon as claude saves it.</div>
+      <div class="row gap">
+        <input class="input mono grow" id="gate-new-cwd" list="gate-new-dirs" autocomplete="off" spellcheck="false"
+               placeholder="the project folder, e.g. C:\code\my-app">
+        <datalist id="gate-new-dirs"></datalist>
+        <button class="btn sm primary" id="gate-new-start">Start claude</button>
+        <button class="btn sm" id="gate-new-cancel">Cancel</button>
+      </div>
+      <div class="gate-new-wait" id="gate-new-wait" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <div><div id="gate-new-msg"></div><div class="muted small mono" id="gate-new-time"></div></div>
+      </div>
+      <div class="gate-new-err small" id="gate-new-err" hidden></div>
     </div>
     <input class="input wide gate-input" id="gate-q" autocomplete="off" spellcheck="false"
            placeholder="session id, an id prefix, a folder, or words from the first prompt">
@@ -365,6 +385,19 @@
 <script src="gate.js"></script>
 <script src="recording.js"></script>
 <script src="live.js"></script>
+<!-- GUIDE: one step at a time; everything blurred but the one thing to use -->
+<div class="guide" id="guide" hidden>
+  <div class="guide-shade" id="guide-shade"></div>
+  <div class="guide-ring" id="guide-ring" hidden></div>
+  <div class="guide-card" id="guide-card" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+    <div class="guide-step" id="guide-step"></div>
+    <div class="guide-title" id="guide-title"></div>
+    <div class="guide-text" id="guide-text"></div>
+    <div class="guide-actions" id="guide-actions"></div>
+  </div>
+</div>
+
 <script src="panels.js"></script>
+<script src="guide.js"></script>
 </body>
 </html>

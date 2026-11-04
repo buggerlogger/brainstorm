@@ -121,13 +121,18 @@ export function runnerScript(tag) {
     // exactly as before.
     '  if ($c.env) { foreach ($kv in $c.env.PSObject.Properties) { Set-Item -LiteralPath ("Env:" + $kv.Name) -Value ([string]$kv.Value) } }',
     '  $plugins = @($c.plugins | Where-Object { $_ } | ForEach-Object { "--plugin-dir"; $_ })',
-    '  $argv = @("--resume", $c.resume) + $plugins + @($c.args | Where-Object { $_ })',
+    // A NEW session (Create session) starts with --session-id: the id is
+    // brainstorm's, so it knows which transcript to wait for. Every start
+    // after that, a Save & Resume included, resumes.
+    '  $first = if ($c.fresh) { @("--session-id", $c.resume) } else { @("--resume", $c.resume) }',
+    '  $argv = $first + $plugins + @($c.args | Where-Object { $_ })',
     // ⛔ Start-Process joins -ArgumentList with spaces and quotes NOTHING
     // (Windows PowerShell 5.1): a plugin folder under a user name with a space
     // would reach claude as two arguments.
     '  $argv = @($argv | ForEach-Object { if ("$_".Contains(" ")) { [char]34 + $_ + [char]34 } else { $_ } })',
     '  Write-Host ""',
-    '  Write-Host ("brainstorm: claude --resume " + $c.resume) -ForegroundColor Cyan',
+    '  if ($c.fresh) { Write-Host ("brainstorm: new claude session " + $c.resume + " - type your first message") -ForegroundColor Cyan }',
+    '  else { Write-Host ("brainstorm: claude --resume " + $c.resume) -ForegroundColor Cyan }',
     '  if ($plugins.Count) { Write-Host "brainstorm: live hooks on (brainstorm-live mod)" -ForegroundColor DarkGray }',
     '  Note ("start " + $cmd.CommandType + " " + $cmd.Source + " " + ($argv -join " "))',
     // Start-Process -NoNewWindow shares THIS console, so claude gets the real
@@ -205,7 +210,8 @@ function splitArgs(s) {
 
 // plugins: folders claude is given with --plugin-dir (the brainstorm-live mod);
 // env: variables the runner sets before it starts claude (where the mod posts).
-export function openSessionWindow({ sessionId, cwd, shell = 'powershell', claudeArgs = '', claude = 'claude', plugins = [], env = {} } = {}) {
+// fresh: start a NEW claude session with this id (--session-id), not resume one.
+export function openSessionWindow({ sessionId, cwd, shell = 'powershell', claudeArgs = '', claude = 'claude', plugins = [], env = {}, fresh = false } = {}) {
   if (!IS_WIN) throw new Error('session windows are implemented for Windows only so far');
   if (!sessionId || !cwd) throw new Error('need sessionId and cwd');
   // ⛔ claude --resume finds a session by the folder it runs in, so there is
@@ -217,7 +223,7 @@ export function openSessionWindow({ sessionId, cwd, shell = 'powershell', claude
   mkdirSync(DIR(), { recursive: true });
   const tag = randomUUID().slice(0, 8);
   const p = paths(tag);
-  writeControl(tag, { resume: sessionId, args: splitArgs(claudeArgs), claude, plugins, env, seq: 1, stop: false });
+  writeControl(tag, { resume: sessionId, fresh: !!fresh, args: splitArgs(claudeArgs), claude, plugins, env, seq: 1, stop: false });
   writeFileSync(p.runner, runnerScript(tag), 'utf8');
   writeFileSync(p.meta, JSON.stringify({ tag, cwd, shell, openedAt: new Date().toISOString(), firstSession: sessionId }, null, 2));
 
@@ -259,7 +265,9 @@ export function resumeInWindow(tag, sessionId, launch = null) {
     plugins: launch.plugins || [],
     env: launch.env || {},
   } : {};
-  writeControl(tag, { ...cur, ...now, resume: sessionId, seq: (cur.seq || 0) + 1, stop: false });
+  // ⛔ fresh is for the FIRST start only: a switch resumes a session that
+  // exists, and --session-id on an id already used would be refused
+  writeControl(tag, { ...cur, ...now, resume: sessionId, fresh: false, seq: (cur.seq || 0) + 1, stop: false });
   const pid = claudePid(tag);
   const alive = pidAlive(pid);
   const killed = alive ? killTree(pid) : false;

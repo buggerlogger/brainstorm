@@ -79,6 +79,8 @@ export const SCHEMA = [
   { key: 'theme', group: 'Appearance', type: 'enum', default: 'dark', options: ['dark', 'light'], label: 'Theme' },
   { key: 'fontSize', group: 'Appearance', type: 'int', default: 12, min: 9, max: 22, label: 'Editor font size' },
   { key: 'wrap', group: 'Appearance', type: 'bool', default: false, label: 'Wrap long lines in the editor' },
+  { key: 'showGuide', group: 'Appearance', type: 'bool', default: true, label: 'Show the guide when the app starts',
+    help: 'The step-by-step guide for a first edit. It turns itself off when you finish or skip it; the Guide button in the title bar opens it any time.' },
 
   // --- polling ---
   { key: 'pollShellMs', group: 'Advanced', type: 'int', default: 600, min: 150, max: 10000, label: 'Shell poll (ms)' },
