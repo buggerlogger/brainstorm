@@ -2,6 +2,19 @@
 <p align="center"><br/>
 <h1 align="center"><img src="assets/banner.png" width="600" alt="brainstorm"></h1>
 
+<p align="center">
+  <a href="https://github.com/buggerlogger/brainstorm/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/buggerlogger/brainstorm?style=flat-square"></a>
+  <a href="https://github.com/buggerlogger/brainstorm/releases"><img alt="downloads" src="https://img.shields.io/github/downloads/buggerlogger/brainstorm/total?style=flat-square"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/buggerlogger/brainstorm?style=flat-square"></a>
+  <img alt="platform: Windows" src="https://img.shields.io/badge/platform-Windows-0078D6?style=flat-square">
+  <a href="#only-the-live-view-in-any-claude"><img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square&logo=claude&logoColor=white"></a>
+  <a href="#install"><img alt="node >= 22" src="https://img.shields.io/badge/node-%E2%89%A522-339933?style=flat-square&logo=nodedotjs&logoColor=white"></a>
+  <a href="https://github.com/buggerlogger/brainstorm/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"><img alt="good first issues" src="https://img.shields.io/github/issues/buggerlogger/brainstorm/good%20first%20issue?style=flat-square&label=good%20first%20issues&color=7057ff"></a>
+  <a href="https://github.com/buggerlogger/brainstorm/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/buggerlogger/brainstorm?style=flat-square"></a>
+  <a href="https://github.com/buggerlogger/brainstorm/commits/master"><img alt="last commit" src="https://img.shields.io/github/last-commit/buggerlogger/brainstorm?style=flat-square"></a>
+  <a href="#status"><img alt="status: beta" src="https://img.shields.io/badge/status-beta-orange?style=flat-square"></a>
+</p>
+
 <code>npx github:buggerlogger/brainstorm setup</code>
 
 **See exactly what Claude Code sends to the model. Edit it. Resume.**
