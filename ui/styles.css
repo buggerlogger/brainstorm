@@ -464,6 +464,12 @@ body.gated .titlebar, body.gated .shell, body.gated .panel, body.gated .statusba
   background: var(--bg-input); font-family: var(--mono); font-size: 12px;
   white-space: pre-wrap; color: var(--fg-bright);
 }
+.guide-wait {
+  display: flex; align-items: center; gap: 8px; margin: 2px 0 4px;
+  font-size: 12px; color: var(--fg-dim);
+}
+.guide-wait .spinner { width: 14px; height: 14px; border-width: 2px; flex: none; }
+.guide-wait[hidden] { display: none; }
 .guide-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .guide-actions .skip { margin-right: auto; }
 
