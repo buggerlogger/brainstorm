@@ -9,7 +9,8 @@
 
 ## BUG HUNTING TESTING (claude-opus-5.5) ... 
 
-<img width="1919" height="1064" alt="image" src="https://github.com/user-attachments/assets/49dcce80-6958-42f1-9898-1b7c9ea5f3d8" />
+<img width="1280" height="719" alt="image" src="https://github.com/user-attachments/assets/da7c68c3-c024-488d-a824-a6a5553591af" />
+
 
 [CONTEXT TEMPLATE I USED IN SS](context-template/bugbountyhuntingcontext.md)
 
