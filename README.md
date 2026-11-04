@@ -1,4 +1,6 @@
-<h1 align="center"><img src="assets/banner.png" width="600" alt="brainstorm"></h1>
++<h1 align="center"><img src="assets/banner.png" width="600" alt="brainstorm"></h1>
+
+<code>npx github:buggerlogger/brainstorm setup</code>
 
 **See exactly what Claude Code sends to the model. Edit it. Resume.**
 
@@ -15,9 +17,7 @@ tested against a real claude, but it is still changing.
 Or everything in one command (Node 22+): the latest code, the live plugin in
 Claude Code, and the app built into `Desktop\brainstorm-app`:
 
-```
-npx github:buggerlogger/brainstorm setup
-```
+<code>npx github:buggerlogger/brainstorm setup</code>
 
 Run it again to update. Node older than 24 cannot build the exe, so it takes
 the latest release instead, checked against the digest GitHub publishes.
