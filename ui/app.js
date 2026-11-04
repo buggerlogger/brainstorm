@@ -127,6 +127,16 @@ function renderTree() {
       label: cfg.sessionId.slice(0, 8), meta: `${S.state.totals.blocks} blocks`,
       cls: 'selected',
     }));
+    const m = S.state.main || { exists: false, text: '' };
+    const mainNode = node({
+      depth: 1, icon: '◆', iconCls: 'pin',
+      label: 'main context',
+      meta: !m.exists || !m.text.trim() ? 'empty · survives rewind' : m.paused ? 'paused: compacted' : m.applied ? `pinned · #${m.blockId}` : 'not applied',
+      cls: S.active === 'main' ? 'selected' : '',
+      onClick: () => openMain(),
+    });
+    mainNode.title = 'Text here survives a rewind: it is pinned into the first user message and goes back in on every build and after every rewind.';
+    frag.appendChild(mainNode);
     for (const g of S.state.groups) {
       const key = `g:${g.name}`;
       const open = S.expanded.has(key);
@@ -313,6 +323,7 @@ $('#editor').addEventListener('input', () => {
 $('#editor').addEventListener('scroll', () => { $('#gutter').scrollTop = $('#editor').scrollTop; });
 
 async function pushBlock(t) {
+  // the main context is saved by save(), not on every keystroke
   if (t.kind !== 'block') return;
   try {
     await api('/api/block', { id: t.id, text: t.text });
@@ -335,7 +346,19 @@ async function toggleKeep(id, keep) {
 
 async function save() {
   const t = activeTab();
-  if (t && t.kind === 'block' && !t.readonly) await pushBlock(t);
+  const pushed = !!(t && t.kind === 'block' && !t.readonly);
+  if (pushed) await pushBlock(t);   // which also reads the state back
+  const mainTab = S.tabs.find((x) => x.kind === 'main' && x.dirty);
+  if (mainTab) await saveMain(mainTab);
+  // A normal message edited here is lost when the chat is rewound to before
+  // it. Say so BEFORE writing, while there is still a choice.
+  if (!pushed && !mainTab) { try { S.state = await api('/api/state'); } catch { /* the save below reports it */ } }
+  const risky = rewindRisk();
+  if (risky.length) {
+    const choice = await rewindWarning(risky);
+    if (choice === 'cancel') { status('not saved'); return; }
+    if (choice === 'main') { await moveToMain(risky); return; }
+  }
   try {
     const r = await api('/api/save', {});
     for (const tab of S.tabs) tab.dirty = false;
@@ -457,6 +480,8 @@ function renderFlowTree() {
         onClick: () => jumpTo(ci, fi),
         data: { call: ci, frame: fi },
       });
+      // blockLine, not source.line: the line of the message the block is on
+      addPen(n, { line: f.blockLine ?? null, kind: f.kind, why: f.blockWhy });
       frag.appendChild(n);
     });
     for (const p of c.problems) frag.appendChild(node({ depth: 2, icon: '!', label: p, iconCls: 'tool_result' }));
@@ -641,6 +666,164 @@ function askConfirm(text) {
     document.addEventListener('keydown', onKey, true);
   });
 }
+
+/* -------------------------------------------------------- main context --- */
+
+// The main context: written like a block, stored as a pin (POST /api/main).
+// It is what survives a rewind -- the message blocks are not.
+function mainMeta(m) {
+  const base = 'main context · pinned into the first user message · a rewind cannot delete it';
+  if (m.paused) return `${base} · PAUSED: Claude compacted the conversation since this was saved, so its summary carries it now. Save it again (Ctrl+S) to pin it again.`;
+  return m.applied ? `${base} · in block #${m.blockId}` : `${base} · Ctrl+S to pin it`;
+}
+
+function openMain() {
+  const m = S.state?.main || { exists: false, text: '' };
+  let tab = S.tabs.find((x) => x.key === 'main');
+  if (!tab) {
+    tab = { key: 'main', kind: 'main', label: '◆ main context', text: m.text || '', readonly: false, dirty: false };
+    S.tabs.push(tab);
+  }
+  tab.meta = mainMeta(m);
+  S.active = 'main';
+  renderAll();
+  return tab;
+}
+
+async function saveMain(tab) {
+  try {
+    const r = await api('/api/main', { text: tab.text });
+    S.state = r.state;
+    tab.dirty = false;
+    tab.meta = mainMeta(r.main);
+    renderAll();
+    termWrite(`$ main context saved  -> ${r.main.applied ? `pinned into block #${r.main.blockId}` : r.main.paused ? 'paused (compacted)' : 'not applied'}`, 'ok');
+  } catch (err) { status(err.message, 'err'); termWrite(err.message, 'err'); }
+}
+
+// Edited message blocks a rewind would take away: text from the user or
+// the assistant, still in the context.
+function rewindRisk() {
+  const dirty = new Set(S.state?.totals?.dirty || []);
+  const out = [];
+  for (const g of S.state?.groups || []) {
+    for (const b of g.blocks) {
+      if (dirty.has(b.id) && b.keep && b.kind === 'text' && (b.role === 'user' || b.role === 'assistant')) out.push(b);
+    }
+  }
+  return out;
+}
+
+// The warning, over a blurred app: 'main' | 'save' | 'cancel'.
+function rewindWarning(blocks) {
+  return new Promise((resolve) => {
+    const box = $('#rewind-warn');
+    $('#rw-list').replaceChildren(...blocks.map((b) => el('div', 'rw-item', `#${b.id} · ${b.role} message · ${b.title}`)));
+    box.hidden = false;
+    $('#rw-main').focus();
+    const done = (v) => {
+      box.hidden = true;
+      document.removeEventListener('keydown', onKey, true);
+      resolve(v);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done('cancel'); } };
+    $('#rw-main').onclick = () => done('main');
+    $('#rw-save').onclick = () => done('save');
+    $('#rw-cancel').onclick = () => done('cancel');
+    document.addEventListener('keydown', onKey, true);
+  });
+}
+
+// The lines an edit ADDED: what moves to the main context. Lines that were
+// already there stay where they were.
+function addedLines(original, edited) {
+  const have = new Map();
+  for (const l of String(original).split('\n')) have.set(l, (have.get(l) || 0) + 1);
+  const out = [];
+  for (const l of String(edited).split('\n')) {
+    if (have.get(l) > 0) have.set(l, have.get(l) - 1);
+    else out.push(l);
+  }
+  return out.join('\n').replace(/^\s+|\s+$/g, '');
+}
+
+// Move what was added to these messages into the main context, and put the
+// messages back as they were. A block whose edit only removed text keeps
+// its edit: there is nothing to move.
+async function moveToMain(blocks) {
+  const moved = [];
+  const kept = [];
+  for (const b of blocks) {
+    const cur = await api(`/api/block?id=${b.id}`);
+    const add = cur.original === null ? '' : addedLines(cur.original, cur.text);
+    if (!add) { kept.push(b.id); continue; }
+    await api('/api/block', { id: b.id, text: cur.original });
+    const tab = S.tabs.find((x) => x.key === `block:${b.id}`);
+    if (tab) { tab.text = cur.original; tab.dirty = false; }
+    moved.push({ id: b.id, add });
+  }
+  const mainTab = openMain();
+  if (moved.length) {
+    const head = mainTab.text.replace(/\s+$/, '');
+    mainTab.text = [head, ...moved.map((x) => x.add)].filter(Boolean).join('\n\n');
+    await saveMain(mainTab);
+  }
+  try { await api('/api/save', {}); } catch (err) { status(err.message, 'err'); }
+  S.state = await api('/api/state');
+  renderAll();
+  status(moved.length
+    ? `moved your text from ${moved.map((x) => `#${x.id}`).join(', ')} into the main context: a rewind cannot delete it there`
+    : 'nothing was added to those messages, so nothing moved');
+  if (kept.length) termWrite(`  kept as edited (only text removed, nothing to move): ${kept.map((i) => `#${i}`).join(', ')}`, 'dim');
+}
+
+/* -------------------------------------------------- frame -> its block --- */
+
+// The block a debugger frame came from: the same transcript line (each line
+// holds one content block -- measured, 127 lines, 127 blocks) and a matching
+// kind. null when the frame is not in the opened blocks: the system prompt
+// and tool list are no block, and a call recorded after the session was
+// opened is newer than its blocks.
+const FRAME_KINDS = { message: ['text', 'thinking'], text: ['text'], thinking: ['thinking'], tool_call: ['tool_use'], tool_use: ['tool_use'], tool_result: ['tool_result'] };
+function blockForFrame({ line, kind }) {
+  if (!S.state?.open || !line) return null;
+  const want = FRAME_KINDS[kind] || null;
+  for (const g of S.state.groups) {
+    for (const b of g.blocks) if (b.line === line && (!want || want.includes(b.kind))) return b.id;
+  }
+  return null;
+}
+
+async function editFromFrame(f) {
+  if (!f.line) { status('this frame is not in the transcript (the system prompt or the tool list): there is no block to edit', 'err'); return; }
+  let id = blockForFrame(f);
+  if (id === null) {
+    const ok = await askConfirm(`This call is newer than the blocks you opened (transcript line ${f.line}). Refresh the blocks from the transcript? Your edits are carried over.`);
+    if (!ok) return;
+    try {
+      const r = await api('/api/refresh', {});
+      S.state = r.state;
+      renderAll();
+      termWrite(`$ refresh  -> ${r.before} -> ${r.after} blocks, ${r.carried.length} edit(s) carried${r.lost.length ? `, ${r.lost.length} could not be: their messages are no longer in the conversation` : ''}`, r.lost.length ? 'err' : 'ok');
+    } catch (err) { status(err.message, 'err'); return; }
+    id = blockForFrame(f);
+    if (id === null) { status(`transcript line ${f.line} is not an editable block`, 'err'); return; }
+  }
+  await openBlock(id);
+  status(`editing block #${id}: the context this frame came from`);
+}
+
+// The pen on a frame row: edit the block it came from.
+function addPen(n, frame) {
+  const pen = el('span', `pen${frame.line ? '' : ' off'}`, '✎');
+  pen.title = frame.line ? `edit this block in the context (transcript line ${frame.line})`
+    : frame.why === 'ambiguous' ? 'this exact text is in more than one message: open the one you mean from the Explorer'
+      : 'not a block: the system prompt, the tool list, or text added to the request';
+  pen.addEventListener('click', (e) => { e.stopPropagation(); editFromFrame(frame); });
+  n.appendChild(pen);
+  return n;
+}
+(window.brainstorm = window.brainstorm || {}).editFrame = editFromFrame;
 
 async function rewind(blockId, title) {
   const ok = await askConfirm(
@@ -1019,7 +1202,10 @@ const LIMITS = { side: [160, 760], panel: [28, 900] };
 
 function setSize(which, px) {
   const [lo, hi] = LIMITS[which];
-  const v = Math.max(lo, Math.min(hi, Math.round(px)));
+  // the editor keeps at least 320 px: a sidebar dragged to the window's edge
+  // left no editor to drag it back from
+  const max = which === 'side' ? Math.max(lo, Math.min(hi, window.innerWidth - 48 - 5 - 320)) : hi;
+  const v = Math.max(lo, Math.min(max, Math.round(px)));
   document.body.style.setProperty(which === 'side' ? '--side-w' : '--panel-h', v + 'px');
   try { localStorage.setItem('brainstorm.' + which, String(v)); } catch (err) { /* private window */ }
   return v;

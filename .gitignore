@@ -6,3 +6,5 @@ CONFIG.json
 .DS_Store
 Thumbs.db
 dist/
+# the types claude writes beside a --plugin-dir mod it loads
+mod/*/.claude-plugin/types/

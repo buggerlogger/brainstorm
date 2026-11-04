@@ -126,6 +126,8 @@
         <button class="mini" id="rec-clear" title="Clear the recorded calls">⌫</button>
       </div>
       <div class="pad muted small" id="rec-status"></div>
+      <div class="live" id="live"></div>
+      <div class="live-split" id="split-live" title="drag to resize the Live panel · double-click: default size"></div>
       <div class="tree" id="rec-list"></div>
     </section>
 
@@ -313,6 +315,35 @@
       <div class="grow"></div>
       <span class="muted small">↑↓ choose · Enter open · Esc browse without one</span>
     </div>
+    <div class="gate-loading" id="gate-loading" hidden role="status" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="gate-loading-title" id="gate-loading-title">Loading session</div>
+      <div class="muted small" id="gate-loading-step"></div>
+      <div class="muted small mono" id="gate-loading-time"></div>
+    </div>
+  </div>
+</div>
+
+<!-- REWIND WARNING: saving an edit to a normal message -->
+<div class="modal" id="rewind-warn" hidden role="dialog" aria-modal="true" aria-labelledby="rw-title">
+  <div class="modal-card">
+    <div class="modal-title" id="rw-title">Careful: a rewind deletes this edit</div>
+    <div class="modal-body">
+      You edited a normal message. If the chat is rewound to before it &mdash; in claude
+      (<kbd>Esc</kbd> <kbd>Esc</kbd>, <code>/rewind</code>) or here &mdash; that message is removed,
+      and your edit with it.
+      <br><br>
+      To keep text across rewinds, put it in the <strong>main context</strong>: it is pinned into the
+      first user message and goes back in on every build and after every rewind. When Claude
+      compacts the conversation, its summary takes the main context over like everything else.
+    </div>
+    <div class="modal-list" id="rw-list"></div>
+    <div class="row gap modal-foot">
+      <button class="btn sm primary" id="rw-main">Move my text to the main context</button>
+      <button class="btn sm" id="rw-save">Save here anyway</button>
+      <div class="grow"></div>
+      <button class="btn sm" id="rw-cancel">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -330,6 +361,7 @@
 <script src="menu.js"></script>
 <script src="gate.js"></script>
 <script src="recording.js"></script>
+<script src="live.js"></script>
 <script src="panels.js"></script>
 </body>
 </html>

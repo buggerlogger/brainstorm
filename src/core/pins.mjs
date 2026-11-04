@@ -25,19 +25,40 @@
 // it, and disabling or deleting it removes it cleanly.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
-const STORE_DIR = join(homedir(), '.brainstorm');
-const STORE = join(STORE_DIR, 'pins.json');
+// BRAINSTORM_HOME isolates pins like everything else (every test run sets
+// it), so a test never writes into the pins of a person's real projects --
+// MEASURED: api.test left entries in ~/.brainstorm/pins.json. Without it,
+// pins stay where they have always lived.
+const STORE = () => (process.env.BRAINSTORM_HOME
+  ? join(process.env.BRAINSTORM_HOME, 'pins.json')
+  : join(homedir(), '.brainstorm', 'pins.json'));
 
 export const ANCHORS = ['last-user', 'first-user', 'last-block', 'block'];
 
+// THE MAIN CONTEXT is one pin per project, marked main, always in the first
+// user message. A normal message you edit is lost when the chat is rewound
+// to before it; the main context is not, because like every pin it lives
+// outside the transcript and goes back in on every build and after every
+// rewind. A COMPACTION is different: Claude rewrites the conversation into a
+// summary, and the main context is edited by that like everything else. So
+// it records how many compactions the session had when it was last saved;
+// once there are more, it is PAUSED -- not re-inserted word for word over
+// the summary -- until it is saved again.
+export const mainPinOf = (pins) => pins.find((p) => p.main) || null;
+
+export function compactionsSince(pin, compactions) {
+  if (!Number.isFinite(compactions) || !Number.isFinite(pin.compactions)) return 0;
+  return Math.max(0, compactions - pin.compactions);
+}
+
 function readStore() {
-  if (!existsSync(STORE)) return {};
+  if (!existsSync(STORE())) return {};
   try {
-    return JSON.parse(readFileSync(STORE, 'utf8'));
+    return JSON.parse(readFileSync(STORE(), 'utf8'));
   } catch {
     // A corrupt store must not take the IDE down with it; it is a convenience
     // file, and losing pins is better than refusing to open any session.
@@ -46,8 +67,8 @@ function readStore() {
 }
 
 function writeStore(obj) {
-  mkdirSync(STORE_DIR, { recursive: true });
-  writeFileSync(STORE, JSON.stringify(obj, null, 2));
+  mkdirSync(dirname(STORE()), { recursive: true });
+  writeFileSync(STORE(), JSON.stringify(obj, null, 2));
 }
 
 // Keyed by cwd, NOT by session id: a build makes a new session, and a pin that
@@ -66,15 +87,16 @@ export function savePins(cwd, pins) {
   return pins;
 }
 
-export function newPin({ text = '', anchor = 'last-user', blockId = null, label = '' } = {}) {
+export function newPin({ text = '', anchor = 'last-user', blockId = null, label = '', main = false, compactions = null } = {}) {
   return {
     id: randomUUID().slice(0, 8),
-    label: label || firstWords(text),
+    label: label || (main ? 'main context' : firstWords(text)),
     text,
-    anchor: ANCHORS.includes(anchor) ? anchor : 'last-user',
-    blockId,
+    anchor: main ? 'first-user' : ANCHORS.includes(anchor) ? anchor : 'last-user',
+    blockId: main ? null : blockId,
     enabled: true,
     created: new Date().toISOString(),
+    ...(main ? { main: true, compactions } : {}),
   };
 }
 
@@ -106,6 +128,15 @@ export function hasPin(text, id) {
   return text.includes(open(id));
 }
 
+// Every pin region, whichever pin it is: the text as it is WITHOUT pins, so
+// an edit can be told apart from a pin that was applied into the block.
+export function stripAllPins(text) {
+  return String(text)
+    .replace(/<!-- pin:([0-9a-f]{8}) -->[\s\S]*?(?:<!-- \/pin:\1 -->|$)/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s+$/, '');
+}
+
 function pickAnchor(blocks, pin) {
   const kept = blocks.filter((b) => b.keep !== false);
   if (!kept.length) return null;
@@ -123,7 +154,7 @@ function pickAnchor(blocks, pin) {
 
 // applyPins mutates block text in place and reports what it did. Call it
 // before every build and after every rewind.
-export function applyPins(blocks, pins) {
+export function applyPins(blocks, pins, { compactions = null } = {}) {
   const report = [];
   for (const pin of pins) {
     // Strip first, everywhere. The anchor may have changed since last time.
@@ -135,6 +166,11 @@ export function applyPins(blocks, pins) {
     }
     if (!pin.enabled || !pin.text.trim()) {
       report.push({ id: pin.id, label: pin.label, applied: false, removedFrom: removed, reason: pin.enabled ? 'empty' : 'disabled' });
+      continue;
+    }
+    const since = pin.main ? compactionsSince(pin, compactions) : 0;
+    if (since > 0) {
+      report.push({ id: pin.id, label: pin.label, applied: false, removedFrom: removed, reason: 'compacted', paused: true, compactionsSince: since });
       continue;
     }
     const target = pickAnchor(blocks, pin);

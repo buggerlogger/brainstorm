@@ -206,6 +206,7 @@
           cls: selected === f.seq ? 'selected' : '',
           onClick: () => { stopAutoJump(true); show(f.seq); },
         });
+        addPen(n, { line: f.line, kind: f.kind });
         n.dataset.recSeq = String(f.seq);
         frag.appendChild(n);
       }
@@ -304,6 +305,17 @@
   };
 
   B.setFollow = setAutoJump;
+  B.pauseAutoJump = () => stopAutoJump(true);
+  // The live panel's tool calls jump here once the transcript has them. Same
+  // tool_use_id, so it is the very block the call put into the context; the
+  // RESULT is preferred, because that is what the model was given to read.
+  B.showToolFrame = (id) => {
+    let hit = null;
+    for (const f of R.frames.values()) if (id && f.toolUseId === id && (!hit || f.kind === 'tool_result')) hit = f;
+    if (!hit) return false;
+    show(hit.seq, { flash: true });
+    return true;
+  };
   B.recording = () => ({ ...R, frames: R.frames.size, queue: queue.length });
   setInterval(poll, 700);
   render();

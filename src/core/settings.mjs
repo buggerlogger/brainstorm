@@ -34,6 +34,10 @@ export const SCHEMA = [
     label: 'Extra arguments for claude',
     help: 'Appended to every claude --resume the tool starts, e.g. --permission-mode acceptEdits' },
 
+  { key: 'liveHooks', group: 'Session', type: 'bool', default: true,
+    label: 'Live hooks inside claude (brainstorm-live mod)',
+    help: 'Starts claude with --plugin-dir on the brainstorm-live mod, whose hooks report each model request as it streams and each tool call before it runs. Takes effect for claude started from now on.' },
+
   // --- debugger ---
   { key: 'autoRecord', group: 'Debugger', type: 'bool', default: true,
     label: 'Record automatically when a session opens',

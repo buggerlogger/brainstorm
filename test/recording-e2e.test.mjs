@@ -139,6 +139,62 @@ try {
   }
   check(waitingShown, 'it appears at once, as "next call — not sent yet"');
 
+  step('the Live panel: a request in flight, from inside claude');
+  // What the brainstorm-live mod posts (live-mod.test.mjs proves a real claude
+  // sends exactly these). First a request that is still THINKING: sent, its
+  // first chunk, and empty thinking chunks, which keep arriving while it thinks.
+  await ev(`brainstorm.setFollow(false, false)`);
+  const T = `e2e-turn-${Date.now()}`;
+  const at = Date.now() - 4000;
+  await api('/api/hook', { sessionId: 'e2e', events: [
+    { type: 'turn.start', at, turnId: T, text: 'read note.txt' },
+    { type: 'step.start', at: at + 5, turnId: T, step: 0, model: 'claude-opus-5-5', effort: 'xhigh', messageCount: 16 },
+    { type: 'step.first', at: at + 1400, turnId: T, step: 0 },
+    { type: 'thinking', at: at + 1500, turnId: T, step: 0, block: 0, text: '' },
+    { type: 'thinking', at: at + 2500, turnId: T, step: 0, block: 0, text: '' },
+  ] });
+  let liveText = '';
+  for (let i = 0; i < 20; i++) {
+    liveText = await ev(`document.querySelector('#live').textContent`);
+    if (liveText.includes('in flight') && liveText.includes('last sign of life')) break;
+    await sleep(300);
+  }
+  check(liveText.includes('in flight') && liveText.includes('16 messages sent'), 'the request in flight, with what was sent', liveText.slice(0, 120));
+  check(liveText.includes('waiting for the API') && liveText.includes('thinking') && liveText.includes('last sign of life'), 'still thinking: after waiting for the API, with its last sign of life', (liveText.match(/thinking [^·]*· last sign of life [0-9.]+ s ago/) || [''])[0]);
+
+  // then it starts a Read call
+  await api('/api/hook', { sessionId: 'e2e', events: [
+    { type: 'tool.begin', at: Date.now(), turnId: T, step: 0, block: 1, id: 'toolu_e2e', name: 'Read' },
+    { type: 'tool.input', at: Date.now(), turnId: T, step: 0, block: 1, json: '{"file_path":"C:/work/note.txt"}' },
+    { type: 'tool.call', at: Date.now(), id: 'toolu_e2e', tool: 'Read', input: { file_path: 'C:/work/note.txt' } },
+  ] });
+  for (let i = 0; i < 20; i++) {
+    liveText = await ev(`document.querySelector('#live').textContent`);
+    if (liveText.includes('note.txt')) break;
+    await sleep(300);
+  }
+  check(liveText.includes('Read  note.txt') && /running \d/.test(liveText), 'the Read call, by its file name, running', (liveText.match(/Read.{0,80}/) || [''])[0]);
+  const tip = await ev(`([...document.querySelectorAll('#live .node')].find((n) => n.textContent.includes('note.txt')) || {}).title || ''`);
+  check(tip === 'Read: C:/work/note.txt', 'its tooltip has the full path', tip);
+  check(liveText.includes('Thinking text: not sent'), 'it says plainly that the thinking words are not sent');
+  const segs = await ev(`[...document.querySelectorAll('#live .live-bar .seg')].map((n) => n.className).join(' | ')`);
+  check(/wait/.test(segs) && /think/.test(segs) && /write open/.test(segs), 'the bar: wait, think, and writing still open', segs);
+  await ev(`[...document.querySelectorAll('#live .node')].find((n) => n.textContent.includes('note.txt')).click()`);
+  const tab = await ev(`(S.tabs.find((t) => t.key === 'rec:preview') || {}).text || ''`);
+  check(tab.includes('what claude sent the tool') && tab.includes('C:/work/note.txt') && tab.includes('running'), 'clicking it opens what claude sent the tool', tab.split('\n')[0]);
+  await api('/api/hook', { sessionId: 'e2e', events: [
+    { type: 'tool.done', at: Date.now(), id: 'toolu_e2e', tool: 'Read', isError: false, text: '1\tnumbers: 21 37 49' },
+    { type: 'step.stop', at: Date.now(), turnId: T, step: 0, stopReason: 'tool_use', usage: { input_tokens: 2, output_tokens: 141, cache_read_input_tokens: 0, cache_creation_input_tokens: 41414 } },
+    { type: 'step.end', at: Date.now(), turnId: T, step: 0 },
+  ] });
+  let ended = '';
+  for (let i = 0; i < 20; i++) {
+    ended = await ev(`document.querySelector('#live').textContent`);
+    if (ended.includes('last request')) break;
+    await sleep(300);
+  }
+  check(ended.includes('last request') && ended.includes('cache written 41,414'), 'when it ends: the usage the API reported', (ended.match(/cache read.{0,80}/) || [''])[0]);
+
   step('auto-jump can be stopped');
   await ev(`brainstorm.setFollow(true, false)`);
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);

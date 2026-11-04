@@ -25,7 +25,7 @@
 // terminal can never be the one that gets stopped.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { platform } from 'node:os';
@@ -57,8 +57,17 @@ function runnerScript(tag) {
     `$pidFile = ${psq(p.pid)}`,
     `$log = ${psq(p.log)}`,
     `$Host.UI.RawUI.WindowTitle = "brainstorm ${tag}"`,
-    'function Read-Ctl { try { Get-Content -Raw -LiteralPath $ctl | ConvertFrom-Json } catch { $null } }',
-    'function Note($m) { Add-Content -LiteralPath $log -Value ((Get-Date -Format o) + "  " + $m) }',
+    // ⛔ Every file this runner touches is retried. A file another process has
+    // open at that instant (a reader, a virus scan right after each write)
+    // makes the write fail -- MEASURED: log lines lost at random, 2 runs in 4,
+    // including "runner started pid", the line stop/close find the runner by.
+    // A failed read of the control file was worse: it returned nothing, and
+    // nothing means STOP, so a Save & Resume could end the window instead of
+    // switching it. .NET calls are used because they throw, so Retry sees it.
+    'function Retry([scriptblock]$Do) { for ($i = 0; $i -lt 40; $i++) { try { return (& $Do) } catch { Start-Sleep -Milliseconds 25 } }; $null }',
+    // a half-written file is no answer either: -ErrorAction Stop makes bad JSON throw
+    'function Read-Ctl { Retry { $j = [System.IO.File]::ReadAllText($ctl) | ConvertFrom-Json -ErrorAction Stop; if ($null -eq $j) { throw "empty" }; $j } }',
+    'function Note($m) { $line = (Get-Date -Format o) + "  " + $m; [void](Retry { [System.IO.File]::AppendAllText($log, $line + [Environment]::NewLine); $true }) }',
     // ⛔ Put the terminal back after claude. claude's interactive screen turns
     // MOUSE REPORTING on. Save & Resume (and stop) end claude with a hard kill,
     // so it never turns it off again -- and every mouse move or drag in the
@@ -92,9 +101,19 @@ function runnerScript(tag) {
     '    $viaPs1 = $null -ne $cmd',
     '  }',
     '  if ($null -eq $cmd) { Write-Host "brainstorm: cannot find $exe on PATH" -ForegroundColor Red; Note "missing $exe"; break }',
-    '  $argv = @("--resume", $c.resume) + @($c.args | Where-Object { $_ })',
+    // The brainstorm-live mod and where it posts. Set on THIS process, so the
+    // claude it starts inherits them; a control file without them runs claude
+    // exactly as before.
+    '  if ($c.env) { foreach ($kv in $c.env.PSObject.Properties) { Set-Item -LiteralPath ("Env:" + $kv.Name) -Value ([string]$kv.Value) } }',
+    '  $plugins = @($c.plugins | Where-Object { $_ } | ForEach-Object { "--plugin-dir"; $_ })',
+    '  $argv = @("--resume", $c.resume) + $plugins + @($c.args | Where-Object { $_ })',
+    // ⛔ Start-Process joins -ArgumentList with spaces and quotes NOTHING
+    // (Windows PowerShell 5.1): a plugin folder under a user name with a space
+    // would reach claude as two arguments.
+    '  $argv = @($argv | ForEach-Object { if ("$_".Contains(" ")) { [char]34 + $_ + [char]34 } else { $_ } })',
     '  Write-Host ""',
     '  Write-Host ("brainstorm: claude --resume " + $c.resume) -ForegroundColor Cyan',
+    '  if ($plugins.Count) { Write-Host "brainstorm: live hooks on (brainstorm-live mod)" -ForegroundColor DarkGray }',
     '  Note ("start " + $cmd.CommandType + " " + $cmd.Source + " " + ($argv -join " "))',
     // Start-Process -NoNewWindow shares THIS console, so claude gets the real
     // TTY; -PassThru gives the pid to record. A script that is the only option
@@ -104,9 +123,9 @@ function runnerScript(tag) {
     '  } else {',
     '    $p = Start-Process -FilePath $cmd.Source -ArgumentList $argv -NoNewWindow -PassThru',
     '  }',
-    '  Set-Content -LiteralPath $pidFile -Value $p.Id',
+    '  [void](Retry { [System.IO.File]::WriteAllText($pidFile, [string]$p.Id); $true })',
     '  $p.WaitForExit()',
-    '  Remove-Item -LiteralPath $pidFile -ErrorAction SilentlyContinue',
+    '  [void](Retry { if ([System.IO.File]::Exists($pidFile)) { [System.IO.File]::Delete($pidFile) }; $true })',
     // Whether claude quit or was killed, the terminal may be left in its modes.
     '  Reset-Terminal',
     '  Note ("exit " + $p.ExitCode + " for " + $c.resume + "; terminal reset")',
@@ -169,13 +188,21 @@ function splitArgs(s) {
   return out;
 }
 
-export function openSessionWindow({ sessionId, cwd, shell = 'powershell', claudeArgs = '', claude = 'claude' } = {}) {
+// plugins: folders claude is given with --plugin-dir (the brainstorm-live mod);
+// env: variables the runner sets before it starts claude (where the mod posts).
+export function openSessionWindow({ sessionId, cwd, shell = 'powershell', claudeArgs = '', claude = 'claude', plugins = [], env = {} } = {}) {
   if (!IS_WIN) throw new Error('session windows are implemented for Windows only so far');
   if (!sessionId || !cwd) throw new Error('need sessionId and cwd');
+  // ⛔ claude --resume finds a session by the folder it runs in, so there is
+  // no other folder to fall back to -- and spawning into a folder that is
+  // gone used to take the WHOLE SERVER down: wt.exe failed with ENOENT on an
+  // 'error' event nothing handled (measured: a session from a deleted temp
+  // folder, opened by Save & Resume).
+  if (!existsSync(cwd)) throw new Error(`the session's folder no longer exists: ${cwd} -- claude --resume has to run there`);
   mkdirSync(DIR(), { recursive: true });
   const tag = randomUUID().slice(0, 8);
   const p = paths(tag);
-  writeControl(tag, { resume: sessionId, args: splitArgs(claudeArgs), claude, seq: 1, stop: false });
+  writeControl(tag, { resume: sessionId, args: splitArgs(claudeArgs), claude, plugins, env, seq: 1, stop: false });
   writeFileSync(p.runner, runnerScript(tag), 'utf8');
   writeFileSync(p.meta, JSON.stringify({ tag, cwd, shell, openedAt: new Date().toISOString(), firstSession: sessionId }, null, 2));
 
@@ -194,16 +221,30 @@ export function openSessionWindow({ sessionId, cwd, shell = 'powershell', claude
     args = ['/c', 'start', `brainstorm ${tag}`, '/D', cwd, ps, ...psArgs];
   }
   const child = spawn(exe, args, { cwd, stdio: 'ignore', windowsHide: false });
+  // a window that fails to start is this window's problem, never the server's
+  child.on('error', (err) => {
+    try { appendFileSync(p.log, `${new Date().toISOString()}  could not start the window: ${err.message}\r\n`); } catch { /* nowhere to say it */ }
+  });
   child.unref();
   return { tag, sessionId, cwd, host: hasWt ? 'wt' : 'start', runner: p.runner };
 }
 
 // Switch a window to another session: write the id, then end ONLY the claude
 // this window started. The runner resumes the new id in the same window.
-export function resumeInWindow(tag, sessionId) {
+//
+// launch: how claude is started from now on ({ claude, claudeArgs, plugins,
+// env }), as the settings are NOW. Without it the window kept what it was
+// opened with, so a corrected claudePath never reached a window already open.
+export function resumeInWindow(tag, sessionId, launch = null) {
   const cur = readControl(tag);
   if (!cur) throw new Error(`no window ${tag}`);
-  writeControl(tag, { ...cur, resume: sessionId, seq: (cur.seq || 0) + 1, stop: false });
+  const now = launch ? {
+    claude: launch.claude || 'claude',
+    args: splitArgs(launch.claudeArgs),
+    plugins: launch.plugins || [],
+    env: launch.env || {},
+  } : {};
+  writeControl(tag, { ...cur, ...now, resume: sessionId, seq: (cur.seq || 0) + 1, stop: false });
   const pid = claudePid(tag);
   const alive = pidAlive(pid);
   const killed = alive ? killTree(pid) : false;
@@ -237,9 +278,21 @@ export function listWindows() {
       try { meta = JSON.parse(readFileSync(join(DIR(), f), 'utf8')); } catch { /* ignore */ }
       const ctl = readControl(tag);
       const pid = claudePid(tag);
-      return { ...meta, tag, session: ctl?.resume ?? null, seq: ctl?.seq ?? null, stopped: !!ctl?.stop, claudePid: pid, claudeRunning: pidAlive(pid) };
+      let claudeSince = null;
+      try { claudeSince = statSync(paths(tag).pid).mtimeMs; } catch { /* not running */ }
+      return { ...meta, tag, session: ctl?.resume ?? null, seq: ctl?.seq ?? null, stopped: !!ctl?.stop, claudePid: pid, claudeRunning: pidAlive(pid), claudeSince };
     })
     .sort((a, b) => (a.openedAt < b.openedAt ? 1 : -1));
+}
+
+// A window whose claude is running this session right now. Opening the
+// session again ADOPTS it rather than starting a second claude on the same
+// transcript -- after brainstorm was closed and opened again, and when the
+// open is asked for twice (measured: two windows for one session six
+// seconds apart, a second click while the first open was still loading).
+export function findRunningWindow(sessionId) {
+  if (!sessionId) return null;
+  return listWindows().find((w) => w.claudeRunning && w.session === sessionId) || null;
 }
 
 export function windowLog(tag) {

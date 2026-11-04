@@ -23,6 +23,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, copyFileSync, writeFileSync, readdirSync, statSync, existsSync, rmSync, renameSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LIVE_MOD_FILES } from '../src/runtime.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist');
@@ -89,6 +90,15 @@ for (const f of readdirSync(join(ROOT, 'ui'))) {
   if (statSync(p).isFile()) assets[`ui/${f}`] = relative(ROOT, p).split('\\').join('/');
 }
 console.log(`   ${Object.keys(assets).length} UI files: ${Object.keys(assets).join(', ')}`);
+// The brainstorm-live mod: runtime.liveModDir() writes these out next to the
+// app's data, because claude loads a plugin from real files. The list is the
+// one runtime.mjs reads, so the two cannot disagree; a missing file fails here.
+for (const rel of LIVE_MOD_FILES) {
+  const p = join(ROOT, 'mod', 'brainstorm-live', ...rel.split('/'));
+  if (!existsSync(p)) throw new Error(`the live mod is missing ${rel}`);
+  assets[`mod/brainstorm-live/${rel}`] = relative(ROOT, p).split('\\').join('/');
+}
+console.log(`   live mod: ${LIVE_MOD_FILES.join(', ')}`);
 
 const seaConfig = {
   main: 'dist/app.cjs',

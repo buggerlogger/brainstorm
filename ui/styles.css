@@ -169,6 +169,12 @@ body {
 .node.dropped .lbl { text-decoration: line-through; opacity: .5; }
 .node.dirty .lbl::after { content: " ●"; color: var(--yellow); }
 .node .eye { opacity: 0; color: var(--fg-dim); }
+/* the pen: edit the block a frame came from */
+.node .pen { flex: none; margin-left: 6px; padding: 0 3px; color: var(--fg-dim); opacity: .6; cursor: pointer; border-radius: 3px; }
+.node .pen:hover { opacity: 1; color: var(--yellow); background: var(--bg-hover); }
+.node .pen.off { opacity: .2; cursor: default; }
+.node .pen.off:hover { color: var(--fg-dim); background: none; }
+.ico.pin { color: var(--yellow); }
 .node:hover .eye, .node.dropped .eye { opacity: 1; }
 .ico.user { color: var(--blue); }
 .ico.assistant { color: var(--green); }
@@ -341,7 +347,10 @@ body.resizing iframe, body.resizing .editor { pointer-events: none; }
 
 /* keep the shell usable on a laptop screen */
 @media (max-width: 1100px) {
-  .shell { grid-template-columns: 48px 250px minmax(0, 1fr); }
+  /* ⛔ keep the splitter's column: a 3-column grid here put the splitter in
+     the editor's place and pinned the sidebar at 250 px -- measured at a
+     1000 px window, a 160 px drag moved it 0 px */
+  .shell { grid-template-columns: 48px var(--side-w, 250px) 5px minmax(0, 1fr); }
 }
 
 /* ---------- start gate ---------- */
@@ -383,6 +392,45 @@ body.resizing iframe, body.resizing .editor { pointer-events: none; }
 .gate-foot { display: flex; align-items: center; gap: 10px; padding: 8px 16px 12px; border-top: 1px solid var(--border); }
 .gate-empty { padding: 18px 16px; color: var(--fg-dim); font-size: 12px; }
 body.gated .titlebar, body.gated .shell, body.gated .panel, body.gated .statusbar, body.gated .splitter { pointer-events: none; }
+/* While a session loads, the card itself blurs under a spinner and takes no
+   input: a second click would start a second open. */
+.gate-card { position: relative; }
+.gate-card.loading > :not(.gate-loading) { filter: blur(3px); opacity: .55; pointer-events: none; user-select: none; }
+.gate-loading {
+  position: absolute; inset: 0; z-index: 2; border-radius: 8px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(20, 20, 24, .35);
+}
+.gate-loading[hidden] { display: none; }
+.gate-loading-title { color: var(--fg-bright); font-size: 14px; }
+.gate-loading .mono { font-family: var(--mono); }
+.spinner {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: var(--focus);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+/* ---------- modal: the rewind warning ---------- */
+.modal {
+  position: fixed; inset: 0; z-index: 110;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(10, 10, 12, .45);
+  backdrop-filter: blur(8px) saturate(.8);
+  -webkit-backdrop-filter: blur(8px) saturate(.8);
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  width: min(560px, 100%); background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.55); padding: 16px 18px 14px; font-size: 13px; line-height: 1.5;
+}
+.modal-title { color: var(--yellow); font-size: 15px; margin-bottom: 8px; }
+.modal-body { color: var(--fg); }
+.modal-body kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+.modal-list { margin: 10px 0; max-height: 120px; overflow: auto; font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
+.rw-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modal-foot { margin-top: 6px; }
 
 /* ---------- context menu ---------- */
 .ctxmenu {
@@ -435,6 +483,42 @@ body.gated .titlebar, body.gated .shell, body.gated .panel, body.gated .statusba
 .chip.rec { background: #c42b1c; color: #fff; cursor: pointer; }
 .chip.rec:hover { background: #e03b2b; }
 .node.flash { animation: flash .9s ease-out; }
+/* ---------- live panel (Recording view): what claude is doing now ---------- */
+.live { margin: 0 8px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-elev); font-size: 12px; }
+.live-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.live-dot { color: var(--green); }
+.live-title { font-size: 10px; letter-spacing: .07em; color: var(--fg-bright); }
+.live-head .grow-left { margin-left: auto; }
+.live-note { padding: 6px 8px; color: var(--fg-dim); line-height: 1.4; }
+.live-note.warn { color: var(--yellow); }
+.live-card { padding: 6px 8px 8px; }
+.live-card.inflight .live-step { color: var(--fg-bright); }
+.live-step { color: var(--fg); margin-bottom: 6px; overflow-wrap: anywhere; }
+.live-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--bg-input); gap: 1px; }
+.live-bar .seg { min-width: 3px; }
+.seg.wait, .lg.wait i { background: var(--blue); }
+.seg.think, .lg.think i { background: var(--purple); }
+.seg.quiet, .lg.quiet i { background: var(--fg-dim); }
+.seg.write, .lg.write i { background: var(--green); }
+.seg.open { animation: livepulse 1.2s ease-in-out infinite; }
+@keyframes livepulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .seg.open { animation: none; } }
+.live-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 5px 0 2px; color: var(--fg-dim); font-size: 11px; }
+.lg i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.lg.open { color: var(--fg-bright); }
+.live-usage { color: var(--fg-dim); font-family: var(--mono); font-size: 11px; margin: 4px 0; overflow-wrap: anywhere; }
+.live-text { margin: 4px 0; padding: 5px 6px; max-height: 140px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); border-radius: 3px; font-family: var(--mono); font-size: 11px; }
+.live-text.thinking { color: var(--purple); }
+/* bounded, so the call list under it keeps room; folded to its header */
+.live { flex: none; max-height: var(--live-h, 42%); overflow: auto; margin-bottom: 0; }
+.live.folded { max-height: none; overflow: visible; }
+.live-head { position: sticky; top: 0; z-index: 1; background: var(--bg-elev); cursor: pointer; user-select: none; }
+.live-head .fold { color: var(--fg-dim); width: 10px; flex: none; }
+.live-split { flex: none; height: 7px; margin: 1px 8px 4px; cursor: row-resize; border-radius: 3px; }
+.live-split::after { content: ''; display: block; width: 28px; height: 2px; margin: 2px auto; border-radius: 1px; background: var(--border); }
+.live-split:hover, .live-split.dragging { background: var(--focus); }
+.live-sub { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-dim); padding: 6px 8px 2px; border-top: 1px solid var(--border); }
+
 @keyframes flash { from { background: rgba(78, 201, 176, .45); } to { background: transparent; } }
 .activity .grow { flex: 1; }
 

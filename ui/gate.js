@@ -20,6 +20,8 @@
   let sel = 0;
   let timer = null;
   let seq = 0;
+  let opening = false;  // an open is in flight: the card is blurred and inert
+  let busyTimer = null;
 
   const ago = (iso) => {
     const ms = Date.now() - new Date(iso).getTime();
@@ -112,12 +114,42 @@
   }
 
   async function choose() {
+    if (opening) return;
     const r = rows[sel];
     if (!r) return;
     await openPath(r.path, $('#gate-console').checked);
   }
 
+  // The loading layer over the card: a spinner, what it is doing, and for how
+  // long. A big session takes seconds to extract, and with nothing on screen
+  // a second click looked like the first one had been lost -- MEASURED: two
+  // terminals opened for one session six seconds apart.
+  function busy(title, stepText) {
+    const card = $('#gate .gate-card');
+    if (title === null) {
+      card.classList.remove('loading');
+      $('#gate-loading').hidden = true;
+      clearInterval(busyTimer);
+      busyTimer = null;
+      return;
+    }
+    if (title) $('#gate-loading-title').textContent = title;
+    if (stepText) $('#gate-loading-step').textContent = stepText;
+    if (!busyTimer) {
+      const t0 = Date.now();
+      const tick = () => { $('#gate-loading-time').textContent = `${((Date.now() - t0) / 1000).toFixed(1)} s`; };
+      tick();
+      busyTimer = setInterval(tick, 100);
+    }
+    card.classList.add('loading');
+    $('#gate-loading').hidden = false;
+  }
+
   async function openPath(path, withConsole) {
+    if (opening) return;
+    opening = true;
+    const short = (String(path).match(/([0-9a-f]{8})-[0-9a-f-]{27}\.jsonl$/i) || [])[1] || '';
+    busy(`Loading session ${short}`.trim(), 'extracting the transcript into blocks…');
     $('#gate-count').textContent = 'opening…';
     status('extracting…');
     try {
@@ -127,23 +159,62 @@
       S.active = null;
       S.trace = null;
       if (st.groups[0]) S.expanded.add(`g:${st.groups[0].name}`);
-      hide();
+      // laid out behind the blur, so it is ready the moment the gate lifts
       renderAll();
       termWrite(`[opened ${st.config.sessionId} in ${st.config.cwd}]`, 'sys');
       $('#chat-target').textContent = `will resume: ${st.config.sessionId} in ${st.config.cwd}`;
       B.onSessionOpened?.(st);
+      busy(`Loading session ${st.config.sessionId.slice(0, 8)}`, `${fmt(st.totals.blocks)} blocks · tracing the calls…`);
       await trace('source', { quiet: true });
       if (withConsole) {
-        const w = await api('/api/window', { action: 'open' });
-        termWrite(`[terminal window ${w.tag}: claude --resume ${w.sessionId}]`, 'sys');
-        status(`opened · terminal ${w.tag} running claude --resume`);
+        busy('', 'opening the terminal…');
+        // the session is open either way: a terminal that cannot start (its
+        // folder was deleted) is reported, and does not keep the gate up
+        try {
+          const w = await api('/api/window', { action: 'open' });
+          termWrite(w.reused
+            ? `[terminal window ${w.tag} is already running claude on ${w.sessionId}: attached to it]`
+            : `[terminal window ${w.tag}: claude --resume ${w.sessionId}${w.live ? ' · live hooks on' : ''}]`, 'sys');
+          status(w.reused ? `opened · attached to terminal ${w.tag}` : `opened · terminal ${w.tag} running claude --resume`);
+        } catch (err) {
+          termWrite(`[no terminal: ${err.message}]`, 'err');
+          status(`opened, but no terminal: ${err.message}`, 'err');
+        }
       } else {
         status(`opened ${st.config.sessionId.slice(0, 8)} · ${st.totals.blocks} blocks`);
       }
+      hide();
     } catch (err) {
       $('#gate-count').textContent = '';
       $('#gate-list').prepend(el('div', 'gate-empty', `could not open: ${err.message}`));
       status(err.message, 'err');
+    } finally {
+      opening = false;
+      busy(null);
+    }
+  }
+
+  // A window that attaches to a server which already has a session open --
+  // brainstorm was closed and opened again while the server lived on -- never
+  // passed through the gate, so nothing opened the terminal. Ask the server to
+  // make sure there is one: it adopts a claude still running this session, and
+  // opens one only if the settings say a session gets a terminal.
+  //
+  // ⛔ Only the app's OWN window asks (the exe opens it with ?app=1). Any page
+  // used to: MEASURED, a headless test page loading on a server with a session
+  // open popped a real terminal running claude --resume on that session.
+  const IS_APP_WINDOW = new URLSearchParams(location.search).has('app');
+
+  async function ensureConsole() {
+    try {
+      const w = await api('/api/window', { action: 'ensure' });
+      if (w.reused) termWrite(`[terminal window ${w.tag} is running claude on ${w.sessionId}: attached to it]`, 'sys');
+      else if (w.opened) {
+        termWrite(`[terminal window ${w.tag}: claude --resume ${w.sessionId}${w.live ? ' · live hooks on' : ''}]`, 'sys');
+        status(`terminal ${w.tag} running claude --resume`);
+      }
+    } catch (err) {
+      status(`terminal: ${err.message}`, 'err');
     }
   }
 
@@ -158,6 +229,7 @@
     else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel - 1); paintSel(); }
     else if (e.key === 'Enter') {
       e.preventDefault();
+      if (opening) return;
       // ⛔ Search waits 120 ms after the last keystroke. Pressing Enter inside
       // that window used to open the selected row of the PREVIOUS list --
       // MEASURED: typing 19f1949b and pressing Enter opened e87c0c1c, the top
@@ -173,7 +245,7 @@
         choose();
       }
     }
-    else if (e.key === 'Escape') { e.preventDefault(); hide(); }
+    else if (e.key === 'Escape') { e.preventDefault(); if (!opening) hide(); }
   });
 
   $('#btn-gate').addEventListener('click', show);
@@ -189,5 +261,6 @@
   B.onBoot = () => {
     prevBoot?.();
     if (!S.state || !S.state.open) show();
+    else if (IS_APP_WINDOW) ensureConsole();
   };
 })();

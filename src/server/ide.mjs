@@ -19,26 +19,27 @@
 // can run arbitrary commands.
 
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, rmSync, mkdtempSync } from 'node:fs';
 import { join, dirname, extname, basename } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
-import { IS_SEA, VERSION, engineCommand, readUi, appDataDir } from '../runtime.mjs';
+import { IS_SEA, VERSION, engineCommand, readUi, appDataDir, liveModDir, liveFile } from '../runtime.mjs';
 import { loadSettings, saveSettings, rememberRecent, SCHEMA, settingsFile } from '../core/settings.mjs';
 import { findSessions, searchStrings } from '../core/search.mjs';
 import { listAgents, traceAgent, readersOf } from '../core/agents.mjs';
 import { buildEntries, writeFolder, writeArchive, stampName, safeName } from '../core/export.mjs';
-import { openSessionWindow, resumeInWindow, stopWindow, listWindows, windowLog } from './session-window.mjs';
+import { openSessionWindow, resumeInWindow, stopWindow, listWindows, windowLog, findRunningWindow } from './session-window.mjs';
 
 import { listProjects, resolveSession } from '../core/sessions.mjs';
 import { parseBlocks, writeBlocks, groupBlocks } from '../core/blocksmd.mjs';
 import { readTranscript, summarise } from '../core/transcript.mjs';
 import { traceFlow, probe, diffFlow } from '../core/flow.mjs';
-import { loadPins, savePins, newPin, applyPins, purgePin, rewindTo, ANCHORS } from '../core/pins.mjs';
+import { loadPins, savePins, newPin, applyPins, purgePin, rewindTo, ANCHORS, mainPinOf, stripAllPins } from '../core/pins.mjs';
 import { Shell, SHELLS, DEFAULT_SHELL } from './shell.mjs';
 import { SessionWatcher } from '../core/watch.mjs';
 import { Recorder } from '../core/recorder.mjs';
+import { LiveFeed } from '../core/live.mjs';
 import { openConsole, availableConsoles } from './console.mjs';
 
 // Paths and the engine command come from runtime.mjs, which knows whether
@@ -206,7 +207,24 @@ function workDirFor(idOrPath) {
   return join(base, id);
 }
 
-function loadWorkspace(dir) {
+const compactionsOf = (config) => (config?.compactionLines || []).length;
+
+// Every apply goes through here, so the main context always knows whether
+// the session was compacted since it was last saved.
+function reapplyPins() {
+  ws.pinReport = applyPins(ws.blocks, ws.pins, { compactions: compactionsOf(ws.config) });
+  return ws.pinReport;
+}
+
+function mainView() {
+  const pin = mainPinOf(ws.pins || []);
+  if (!pin) return { exists: false, text: '' };
+  const r = (ws.pinReport || []).find((x) => x.id === pin.id) || {};
+  return { exists: true, id: pin.id, text: pin.text, applied: !!r.applied, blockId: r.blockId ?? null, paused: !!r.paused, compactionsSince: r.compactionsSince || 0 };
+}
+
+// record: false keeps the recorder going (a refresh is the same session).
+function loadWorkspace(dir, { record = true } = {}) {
   const configPath = join(dir, 'CONFIG.json');
   const blocksPath = join(dir, 'BLOCKS.md');
   if (!existsSync(configPath) || !existsSync(blocksPath)) {
@@ -223,15 +241,18 @@ function loadWorkspace(dir) {
   // Re-apply on open: a session rebuilt from a pinned one already carries the
   // pin text in its blocks, and a fresh sibling session does not. Applying is
   // idempotent, so doing it unconditionally is what keeps the two in step.
-  ws.pinReport = applyPins(ws.blocks, ws.pins);
+  reapplyPins();
   const landed = ws.pinReport.filter((r) => r.applied).length;
   if (ws.pins.length) logLine(`pins: ${landed}/${ws.pins.length} applied for ${config.cwd}`);
+  // Each block's text as it was opened, without pins: what an edit is told
+  // apart from, and what moving an edit to the main context subtracts.
+  ws.pristine = new Map(ws.blocks.map((b) => [b.id, stripAllPins(b.text)]));
   // No eager full trace here. It used to be computed on every open and took
   // 17 s on a 44 MB session, blocking the server; nothing needed it at open.
   ws.baseline = null;
   // Point the live watcher and the shell at this project.
   ensureWatcher(config.cwd, config.tokens?.charsPerToken || 4);
-  if (loadSettings().autoRecord !== false) recordFile(config.source);
+  if (record && loadSettings().autoRecord !== false) recordFile(config.source);
   return ws;
 }
 
@@ -290,6 +311,8 @@ function stateView() {
       return { ...p, applied: !!r?.applied, blockApplied: r?.blockId ?? null, rehomed: !!r?.rehomed, reason: r?.reason || null };
     }),
     anchors: ANCHORS,
+    main: mainView(),
+    compactions: compactionsOf(ws.config),
     groups: groups.map((g) => ({
       name: g.name,
       chars: g.chars,
@@ -324,6 +347,84 @@ function titleOf(b) {
   const t = b.text.replace(/\s+/g, ' ').trim();
   return t.length > 72 ? `${t.slice(0, 69)}...` : t || '(empty)';
 }
+
+// --- live hooks --------------------------------------------------------------
+// The brainstorm-live mod, loaded into every claude a session window starts,
+// posts the engine's own events to whichever server live.json names. This
+// server claims the file when it is free -- missing, or naming a process that
+// is gone -- and never takes it from one that is running: a test server
+// started beside the app must not steal the app's events. It checks again
+// every few seconds, so when the app is closed and opened again the new run
+// claims it, and the claude windows still open find it.
+const liveFeed = new LiveFeed();
+let liveClaimed = false;
+
+function alive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
+}
+
+function claimLiveFile(port) {
+  const f = liveFile();
+  let cur = null;
+  try { cur = JSON.parse(readFileSync(f, 'utf8')); } catch { /* none yet, or torn */ }
+  if (cur && cur.pid === process.pid && cur.port === port) return (liveClaimed = true);
+  if (cur && cur.pid && cur.pid !== process.pid && alive(cur.pid)) return (liveClaimed = false);
+  try {
+    mkdirSync(dirname(f), { recursive: true });
+    writeFileSync(f, JSON.stringify({ port, pid: process.pid, at: new Date().toISOString() }));
+    return (liveClaimed = true);
+  } catch {
+    return (liveClaimed = false);
+  }
+}
+
+// The session window's claude has been running a while and nothing came from
+// its mod: the mod reports session.start the moment the session is ready, so
+// claude is still asking something in its window. MEASURED: the folder trust
+// question ("Is this a project you created or one you trust?"), whose
+// highlighted answer is "No, exit" -- no hook runs until it is answered.
+// Only for a claude that started while THIS server ran: one that was already
+// running before (brainstorm closed and opened again) may simply be idle, and
+// this server cannot know what it said before it was listening.
+const SERVER_STARTED = Date.now();
+const WAITING_MS = 8000;
+function claudeWaiting() {
+  if (!ws.window) return null;
+  const w = listWindows().find((x) => x.tag === ws.window);
+  if (!w || !w.claudeRunning || !w.claudeSince || w.claudeSince < SERVER_STARTED) return null;
+  const runningFor = Date.now() - w.claudeSince;
+  // its own events can only come after its pid file was written: claude is
+  // started first, and its first event takes at least half a second
+  if (runningFor < WAITING_MS || liveFeed.lastAt >= w.claudeSince) return null;
+  return { tag: w.tag, session: w.session, runningFor };
+}
+
+function releaseLiveFile() {
+  try { if (JSON.parse(readFileSync(liveFile(), 'utf8')).pid === process.pid) rmSync(liveFile()); } catch { /* not ours */ }
+}
+
+// How every session window starts claude: the person's settings, plus the
+// brainstorm-live mod unless they turned it off.
+function windowLaunch(settings) {
+  let plugins = [];
+  if (settings.liveHooks !== false) {
+    try { plugins = [liveModDir()]; } catch (err) { logLine(`live hooks off: ${err.message}`); }
+  }
+  return {
+    shell: settings.shell,
+    claudeArgs: settings.claudeArgs,
+    claude: settings.claudePath || 'claude',
+    plugins,
+    env: plugins.length ? { BRAINSTORM_LIVE: liveFile() } : {},
+  };
+}
+
+// The last window opened, per session: a second open of the same session
+// inside this window of time is the same request (a double click, two app
+// windows booting) -- before its claude has even written a pid to adopt.
+let recentOpen = null;
+const RECENT_OPEN_MS = 15000;
 
 function ensureWatcher(cwd, ratio) {
   if (!watcher) {
@@ -418,7 +519,13 @@ function reveal(path) {
 const routes = {
   // --- app: version, heartbeat, settings ------------------------------------
 
-  'GET /api/version': () => ({ version: VERSION, sea: IS_SEA, node: process.version, appData: appDataDir(), windows: presenceOpen }),
+  // liveMod: the folder claude is given with --plugin-dir. Inside the exe,
+  // asking for it writes the embedded mod out (only when it differs).
+  'GET /api/version': () => {
+    let liveMod = null;
+    try { liveMod = liveModDir(); } catch { /* reported as null */ }
+    return { version: VERSION, sea: IS_SEA, node: process.version, appData: appDataDir(), windows: presenceOpen, liveMod, liveFile: liveFile() };
+  },
 
   // The app window pings this. When the window is closed the pings stop and
   // the server exits (see startIde) -- otherwise closing the app would leave a
@@ -550,22 +657,48 @@ const routes = {
   'POST /api/window': (body) => {
     const action = body.action || 'open';
     const settings = loadSettings();
-    if (action === 'open') {
+    // 'ensure' is what an app window asks when it attaches to a server that
+    // already has a session open (brainstorm closed and opened again): give
+    // the session its terminal if the settings say it gets one. Both adopt a
+    // claude that is already running this session instead of starting a
+    // second one on the same transcript.
+    if (action === 'open' || action === 'ensure') {
       const sessionId = body.sessionId || ws.config?.sessionId;
       const cwd = body.cwd || ws.config?.cwd;
       if (!sessionId || !cwd) throw new Error('open a session first');
-      const w = openSessionWindow({ sessionId, cwd, shell: settings.shell, claudeArgs: settings.claudeArgs, claude: settings.claudePath || 'claude' });
+      const running = findRunningWindow(sessionId);
+      if (running) {
+        ws.window = running.tag;
+        ensureWatcher(cwd, ws.config?.tokens?.charsPerToken || 4);
+        logLine(`window ${running.tag} adopted: claude is already running ${sessionId}`);
+        return { tag: running.tag, sessionId, cwd: running.cwd || cwd, opened: false, reused: true };
+      }
+      if (recentOpen && recentOpen.sessionId === sessionId && Date.now() - recentOpen.at < RECENT_OPEN_MS) {
+        return { tag: recentOpen.tag, sessionId, cwd, opened: false, reused: true };
+      }
+      if (action === 'ensure' && !settings.autoOpenConsole) return { sessionId, cwd, opened: false, reused: false };
+      const launch = windowLaunch(settings);
+      const w = openSessionWindow({ sessionId, cwd, ...launch });
+      recentOpen = { sessionId, tag: w.tag, at: Date.now() };
       ws.window = w.tag;
       ensureWatcher(cwd, ws.config?.tokens?.charsPerToken || 4);
-      logLine(`window ${w.tag} opened: claude --resume ${sessionId}`);
-      return w;
+      logLine(`window ${w.tag} opened: claude --resume ${sessionId}${launch.plugins.length ? ' (live hooks)' : ''}`);
+      return { ...w, live: launch.plugins.length > 0, opened: true, reused: false };
     }
     const tag = body.tag || ws.window;
     if (!tag) throw new Error('no session window is open');
-    if (action === 'resume') return resumeInWindow(tag, body.sessionId);
+    if (action === 'resume') return resumeInWindow(tag, body.sessionId, windowLaunch(settings));
     if (action === 'stop') return stopWindow(tag, { close: !!body.close });
     if (action === 'log') return { tag, log: windowLog(tag) };
     throw new Error('window action must be open | resume | stop | log');
+  },
+
+  // --- live hooks: the brainstorm-live mod's events, from inside claude -------
+  'POST /api/hook': (body) => liveFeed.ingest(body),
+  'GET /api/hooks': (_body, url) => ({ ...liveFeed.since(url.searchParams.get('since')), claimed: liveClaimed, file: liveFile(), waiting: claudeWaiting() }),
+  'POST /api/hooks': (body) => {
+    if (body.action === 'clear') liveFeed.clear();
+    return { ...liveFeed.since(0), claimed: liveClaimed, file: liveFile() };
   },
 
   // Save & Resume: the whole loop in one call.
@@ -574,7 +707,7 @@ const routes = {
   'POST /api/save-resume': (body) => exclusive('Save & Resume', async () => {
     if (!ws.dir) throw new Error('no session open');
     const settings = loadSettings();
-    ws.pinReport = applyPins(ws.blocks, ws.pins);
+    reapplyPins();
     flushBlocks();
     const r = await engine(['build', '--dir', ws.dir, '--install']);
     const parsed = parseBuild(r.out);
@@ -586,8 +719,8 @@ const routes = {
     if (settings.resumeOnSave && body.resume !== false) {
       const tag = ws.window && listWindows().some((w) => w.tag === ws.window) ? ws.window : null;
       win = tag
-        ? { ...resumeInWindow(tag, parsed.newId), reused: true }
-        : { ...openSessionWindow({ sessionId: parsed.newId, cwd, shell: settings.shell, claudeArgs: settings.claudeArgs, claude: settings.claudePath || 'claude' }), reused: false };
+        ? { ...resumeInWindow(tag, parsed.newId, windowLaunch(settings)), reused: true }
+        : { ...openSessionWindow({ sessionId: parsed.newId, cwd, ...windowLaunch(settings) }), reused: false };
       ws.window = win.tag;
     }
     // Reopen on the NEW session so the tree is the context that is now live.
@@ -664,7 +797,7 @@ const routes = {
     const id = Number(url.searchParams.get('id'));
     const b = ws.blocks.find((x) => x.id === id);
     if (!b) throw new Error(`no block ${id}`);
-    return { ...b, dirty: ws.dirty.has(b.id) };
+    return { ...b, dirty: ws.dirty.has(b.id), original: ws.pristine?.get(b.id) ?? null };
   },
 
   'POST /api/save': () => {
@@ -683,7 +816,7 @@ const routes = {
     // Pins go in BEFORE the engine sees the blocks, every single build. That
     // is the whole guarantee: rewind, rebuild, resume -- the pin is re-applied
     // from its own store each time, so it cannot be edited or rewound away.
-    ws.pinReport = applyPins(ws.blocks, ws.pins);
+    reapplyPins();
     flushBlocks();
     const args = ['build', '--dir', ws.dir];
     if (body.newId) args.push('--new-id', String(body.newId));
@@ -914,11 +1047,76 @@ const routes = {
       throw new Error('pin needs action: add | update | remove');
     }
     savePins(ws.config.cwd, ws.pins);
-    ws.pinReport = applyPins(ws.blocks, ws.pins);
+    reapplyPins();
     flushBlocks();
     logLine(`pin ${action} -> ${ws.pins.length} pin(s) for ${ws.config.cwd}`);
     return { ok: true, pins: ws.pins, report: ws.pinReport, state: stateView() };
   },
+
+  // --- the main context -------------------------------------------------------
+  // One pin per project, in the first user message: what survives a rewind,
+  // in claude or here. Saving it again also un-pauses it after a compaction.
+  'POST /api/main': (body) => {
+    if (!ws.config) throw new Error('no session open');
+    const text = String(body.text ?? '');
+    let pin = mainPinOf(ws.pins);
+    if (!pin) {
+      pin = newPin({ text, main: true, compactions: compactionsOf(ws.config) });
+      ws.pins.unshift(pin);
+    } else {
+      pin.text = text;
+      pin.enabled = true;
+      pin.compactions = compactionsOf(ws.config);
+    }
+    savePins(ws.config.cwd, ws.pins);
+    reapplyPins();
+    if (ws.dir) flushBlocks();
+    logLine(`main context saved: ${text.length} chars`);
+    return { ok: true, main: mainView(), state: stateView() };
+  },
+
+  // Refresh the blocks from the transcript as it is NOW, edits carried over.
+  // The editor holds the blocks as they were when the session was opened, so
+  // a call recorded since has no block to edit until this. An edit is carried
+  // by the transcript line it lives on; one whose line is no longer in the
+  // conversation (rewound or compacted away in claude) cannot be, and is
+  // reported instead of silently dropped.
+  'POST /api/refresh': () => exclusive('a refresh', async () => {
+    if (!ws.dir) throw new Error('no session open');
+    const tmp = mkdtempSync(join(tmpdir(), 'bs-refresh-'));
+    try {
+      const r = await engine(['extract', '--session', ws.config.source, '--dir', tmp]);
+      if (r.code !== 0) throw new Error(`extract failed:\n${r.out}`);
+      const fresh = parseBlocks(join(tmp, 'BLOCKS.md'));
+      const freshConfig = JSON.parse(readFileSync(join(tmp, 'CONFIG.json'), 'utf8'));
+      const freshText = new Map(fresh.blocks.map((b) => [b.id, stripAllPins(b.text)]));
+      const byLine = new Map(fresh.blocks.map((b) => [`${b.line}|${b.kind}`, b]));
+      const carried = [];
+      const lost = [];
+      for (const old of ws.blocks) {
+        const text = stripAllPins(old.text);
+        const edited = ws.pristine?.has(old.id) && text !== ws.pristine.get(old.id);
+        const dropped = old.keep === false;
+        if (!edited && !dropped) continue;
+        const f = byLine.get(`${old.line}|${old.kind}`);
+        if (!f) { lost.push({ id: old.id, line: old.line, kind: old.kind }); continue; }
+        if (edited) f.text = text;
+        if (dropped) f.keep = false;
+        carried.push(f.id);
+      }
+      writeBlocks(join(ws.dir, 'BLOCKS.md'), fresh.header, fresh.blocks);
+      writeFileSync(join(ws.dir, 'CONFIG.json'), JSON.stringify(freshConfig, null, 2));
+      const before = ws.blocks.length;
+      loadWorkspace(ws.dir, { record: false });
+      // pristine is the transcript's text, not the carried edits: those stay edits
+      ws.pristine = freshText;
+      flushBlocks();
+      logLine(`refresh: ${before} -> ${ws.blocks.length} blocks, ${carried.length} edit(s) carried, ${lost.length} lost`);
+      return { ok: true, before, after: ws.blocks.length, carried, lost, state: stateView() };
+    } finally {
+      try { rmSync(tmp, { recursive: true, force: true }); } catch { /* temp */ }
+    }
+  }),
 
   // --- rewind ---------------------------------------------------------------
 
@@ -929,7 +1127,7 @@ const routes = {
     for (const dropped of res.dropped) ws.dirty.add(dropped);
     // Re-apply AFTER the drop so a pin whose anchor just vanished re-homes
     // onto a block that survived instead of disappearing with it.
-    ws.pinReport = applyPins(ws.blocks, ws.pins);
+    reapplyPins();
     flushBlocks();
     logLine(`rewind to block ${id}: dropped ${res.dropped.length}, pins re-applied`);
     return {
@@ -1083,6 +1281,9 @@ export function startIde({ port = 7788, dir = null, session = null, exitWhenClos
     if (ws.dir) console.log(`  workspace        ${ws.dir}`);
     console.log('  loopback only. Ctrl+C to stop.\n');
     if (onListening) onListening(real);
+    claimLiveFile(real);
+    setInterval(() => claimLiveFile(real), 3000).unref();
+    process.on('exit', releaseLiveFile);
   });
 
   // App mode: the server lives exactly as long as some window has it open.

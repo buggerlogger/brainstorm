@@ -42,6 +42,60 @@ No dead tab, no lost scrollback, no second window. Measured: two consecutive
 Save & Resumes, runner pid unchanged, `--resume N1` then `--resume N2`, the
 second session carrying both edits.
 
+## Live: from inside claude
+
+The transcript gets a block only when the block is complete, so a minute of
+thinking used to be a minute of nothing. Every claude a session window starts
+now loads **`mod/brainstorm-live`** with `--plugin-dir`: a Claude Code mod
+whose hooks sit in the engine itself and post each event to brainstorm as it
+happens. The **Live** panel (Recording view) draws the request in flight:
+
+| phase | what it is |
+|---|---|
+| waiting for the API | sent, nothing back yet; the usage later says how much came from the prompt cache and how much was new |
+| thinking | thinking chunks are arriving, with the last sign of life |
+| writing | text, or a tool call's arguments, streaming |
+
+Each tool call appears with its arguments **before it runs** (`tool.call`),
+then what came back; clicking it opens both, and once the transcript has the
+call it jumps to that recorded block (same `tool_use_id`). Measured through
+the mod on a real `claude -p`: 16 messages sent, 6.7 s before the first
+chunk, `Read note.txt` 482 ms, the next request 43 ms after the tool returned
+with 41,137 tokens read from the cache.
+
+What no hook can show: the **words** of the thinking. Claude Code asks the API
+for `"display": "omitted"` (measured on the wire), so thinking chunks arrive
+empty — they still arrive about once a second while it thinks, which is how
+the panel knows it is thinking and not stalled.
+
+The mod never changes anything: each chunk is passed on at once and every
+tool call goes on; events are posted without waiting, so a closed brainstorm
+cannot slow claude down. It finds brainstorm through `live.json` in the app
+data folder, read again when a post fails, so a claude left running finds the
+next brainstorm you open. Turn it off with **Live hooks** in Settings.
+
+## Editing from the debugger, and the main context
+
+Every frame of every call in the debugger and the Recording view has a **✎**:
+it opens the block that frame came from, by its transcript line. A frame
+rebuilt from the request records is matched to its message by kind and exact
+text; when that text is in several messages the pen is off rather than
+guessing. A call recorded after the session was opened has no block yet, so
+its pen offers to refresh the blocks from the transcript, carrying your edits
+over by line (an edit whose message was rewound or compacted away in claude is
+reported, not silently dropped).
+
+Saving an edited **message** warns first, over a blurred app: rewinding the
+chat to before that message deletes it, and the edit with it. *Move my text
+to the main context* moves only the lines you added and puts the message back.
+
+The **main context** (◆ at the top of the tree) is one pin per project, in the
+first user message: stored outside the transcript and put back on every build
+and after every rewind, so a rewind cannot delete it. A compaction can: Claude
+rewrites the conversation into a summary, so once the session has compacted
+since you saved it, the main context is paused instead of re-inserted word for
+word. Saving it again pins it again.
+
 ## Right-click
 
 | on | you can |
@@ -319,6 +373,9 @@ stub claude and checks the window was never replaced.
 asserts the watcher reported a jump with a real context size — the claim that
 would otherwise be easiest to fake.
 
+`test/live-mod.test.mjs` runs a real `claude -p` with the mod and checks that
+everything the Live panel draws reached brainstorm from inside the engine.
+
 `test/skillswap.test.mjs` is the end-to-end proof: it writes two skills with
 different secrets, runs a real session that loads one, swaps it for the other
 in the transcript, rebuilds, resumes, and asks for facts that exist **only**
@@ -335,8 +392,11 @@ src/core/transcript.mjs reading records, chain messages
 src/core/flow.mjs       the flow reconstruction and the probe
 src/core/blocksmd.mjs   BLOCKS.md parse/serialise, folder grouping
 src/core/sessions.mjs   finding sessions; refuses ambiguous ids
-src/core/pins.mjs       sticky context that survives a rewind
+src/core/pins.mjs       sticky context that survives a rewind; the main context
 src/core/watch.mjs      session detection; jumps and calls, live
+src/core/recorder.mjs   the Recording view's calls, read from the transcript
+src/core/live.mjs       the brainstorm-live mod's events, one record per request
+mod/brainstorm-live/    the Claude Code mod: hooks inside claude (--plugin-dir)
 src/server/ide.mjs      the HTTP API (loopback only)
 src/server/shell.mjs    the real shell behind the terminal
 src/server/console.mjs  popping a real terminal window on the desktop
@@ -348,7 +408,8 @@ src/core/export.mjs     dump to sorted folders; zip.mjs writes the archive
 src/core/settings.mjs   the settings schema
 bin/app.mjs             the exe's entry: app window, or --engine
 scripts/build-exe.mjs   single-executable build
-ui/gate.js menu.js follow.js panels.js   start gate, right-click, follow, panels
+ui/gate.js menu.js recording.js live.js panels.js
+                        start gate, right-click, recording, live, panels
 ui/                     the editor: index.html, app.js, styles.css
 test/                   run.mjs, flow.test.mjs, ui.test.mjs, api.test.mjs,
                         shell.test.mjs, skillswap.test.mjs, sweep.mjs

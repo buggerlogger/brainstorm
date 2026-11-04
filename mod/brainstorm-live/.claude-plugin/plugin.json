@@ -1,0 +1,5 @@
+{
+  "name": "brainstorm-live",
+  "version": "0.1.0",
+  "description": "Mirrors Claude Code's engine events (each model request as it streams, each tool call) to the brainstorm context debugger while they happen."
+}

@@ -36,6 +36,20 @@ try {
   const v = await api('/api/version');
   check(v.sea === true, 'running as a single executable', `${v.version}, node ${v.node}`);
 
+  step('the live mod is written out for claude to load');
+  // There is no mod folder inside an exe: liveModDir() writes the embedded
+  // copy next to the app's data. It must be the repo's mod, byte for byte.
+  const { readFileSync: readF, existsSync: exists } = await import('node:fs');
+  const { join: pj, dirname: dn } = await import('node:path');
+  const { fileURLToPath: f2p } = await import('node:url');
+  const repoMod = pj(dn(f2p(import.meta.url)), '..', 'mod', 'brainstorm-live');
+  check(!!v.liveMod && exists(pj(v.liveMod, 'hooks', 'register.ts')), 'the mod is on disk', v.liveMod);
+  for (const rel of ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.ts']) {
+    const a = exists(pj(v.liveMod || '', ...rel.split('/'))) ? readF(pj(v.liveMod, ...rel.split('/'))) : null;
+    const b = readF(pj(repoMod, ...rel.split('/')));
+    check(a && a.equals(b), `${rel} is the repo's`, a ? `${a.length} B` : 'missing');
+  }
+
   step('the start gate can find sessions');
   const all = await api('/api/find-sessions?q=');
   check(all.total > 0, 'lists sessions with an empty query', `${all.total} sessions`);

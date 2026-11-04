@@ -161,7 +161,7 @@ async function main() {
 
   const running = noWindow ? null : await existingServer();
   if (running) {
-    openWindow(`http://127.0.0.1:${running}/`);
+    openWindow(`http://127.0.0.1:${running}/?app=1`);
     console.log(`brainstorm is already running on ${running}; opened another window.`);
     return;
   }
@@ -176,7 +176,9 @@ async function main() {
       mkdirSync(appDataDir(), { recursive: true });
       writeFileSync(join(appDataDir(), 'server.lock.json'), JSON.stringify({ port: real, pid: process.pid, at: new Date().toISOString() }));
       if (!noWindow) {
-        const how = openWindow(`http://127.0.0.1:${real}/`);
+        // ?app=1 marks the person's own window: only it may open a terminal on
+        // its own (gate.js). A test page or a browser tab on the port never does.
+        const how = openWindow(`http://127.0.0.1:${real}/?app=1`);
         console.log(`  window          ${how}`);
       }
     },

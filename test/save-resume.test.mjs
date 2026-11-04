@@ -66,7 +66,10 @@ try {
 
   step('open a small session');
   const { results } = await api('/api/find-sessions?q=');
-  const pick = results.find((r) => r.bytes > 20000 && r.bytes < 2.5e6 && !r.duplicate);
+  // its folder must still exist: claude --resume runs there (a session left by
+  // another test's deleted temp folder cannot be resumed)
+  const { existsSync: folderExists } = await import('node:fs');
+  const pick = results.find((r) => r.bytes > 20000 && r.bytes < 2.5e6 && !r.duplicate && r.cwd && folderExists(r.cwd));
   check(!!pick, 'picked a session', pick?.id);
   const st = await api('/api/open', { session: pick.path });
   check(st.open, 'opened', `${st.totals.blocks} blocks`);
@@ -115,8 +118,11 @@ try {
   check(new RegExp(`runner started pid ${runnerPid}`).test(log) && (log.match(/runner started/g) || []).length === 1,
     'one runner for both sessions: the window was never replaced', `runner ${runnerPid}`);
 
+  // the id is the value after --resume: other arguments (--plugin-dir for the
+  // live mod) follow it on the line
   const lines = readFileSync(argLog, 'utf8').split(/\r?\n/).filter(Boolean).map((l) => l.trim());
-  check(lines.length === 2 && lines[0].endsWith(n1) && lines[1].endsWith(n2), 'claude was started exactly twice, N1 then N2', JSON.stringify(lines.map((l) => l.slice(-12))));
+  const resumed = lines.map((l) => (l.match(/--resume (\S+)/) || [])[1]);
+  check(lines.length === 2 && resumed[0] === n1 && resumed[1] === n2, 'claude was started exactly twice, N1 then N2', JSON.stringify(resumed.map((id) => String(id).slice(0, 8))));
 } catch (err) {
   console.error(`\n  ERROR  ${err.stack || err.message}`);
   failures++;

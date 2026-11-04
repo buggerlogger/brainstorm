@@ -19,7 +19,7 @@
 import * as seaModule from 'node:sea';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, normalize, sep } from 'node:path';
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 
 export const IS_SEA = (() => {
@@ -77,3 +77,34 @@ export function appDataDir() {
 }
 
 export const VERSION = '0.2.0';
+
+// The brainstorm-live mod (mod/brainstorm-live): the folder claude is given
+// with --plugin-dir, so its hooks report the engine's events from inside.
+// From source it is the repo's own folder. Inside the exe there is no folder,
+// and claude needs real files to load, so the embedded copy is written out to
+// the app data folder -- again whenever this build's copy differs, so an
+// updated exe never runs an old mod.
+export const LIVE_MOD_FILES = ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.ts'];
+
+export function liveModDir() {
+  if (!IS_SEA) return join(ROOT, 'mod', 'brainstorm-live');
+  const dir = join(appDataDir(), 'mod', 'brainstorm-live');
+  for (const rel of LIVE_MOD_FILES) {
+    const want = Buffer.from(seaModule.getAsset(`mod/brainstorm-live/${rel}`));
+    const file = join(dir, ...rel.split('/'));
+    let have = null;
+    try { have = readFileSync(file); } catch { /* not written yet */ }
+    if (!have || !have.equals(want)) {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, want);
+    }
+  }
+  return dir;
+}
+
+// Where the server says which port it is on, for the mod: { port, pid }.
+// A claude started by one run of brainstorm keeps running after brainstorm
+// closes; the mod reads this again when a post fails, and finds the next run.
+export function liveFile() {
+  return join(appDataDir(), 'live.json');
+}

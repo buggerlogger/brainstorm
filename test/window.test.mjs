@@ -45,23 +45,36 @@ const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e)
 
 const work = mkdtempSync(join(tmpdir(), 'bs-window-'));
 const argLog = join(work, 'stub-args.log');
+const envLog = join(work, 'stub-env.log');
+// A plugin folder with a SPACE in its path: Start-Process quotes nothing, so
+// without the runner's own quoting it would reach claude as two arguments.
+const pluginDir = join(work, 'with space', 'brainstorm-live');
 const stub = join(work, 'fake-claude.cmd');
+// a second claude: what the claudePath setting names AFTER the window opened
+const argLog2 = join(work, 'stub2-args.log');
+const stub2 = join(work, 'fake-claude-2.cmd');
+writeFileSync(stub2, ['@echo off', `echo %* >> "${argLog2}"`, 'ping -n 600 127.0.0.1 > nul'].join('\r\n'));
 // The stub: append the arguments it was given, then wait ~10 minutes.
 writeFileSync(stub, [
   '@echo off',
   `echo %* >> "${argLog}"`,
+  `echo %BRAINSTORM_LIVE%>> "${envLog}"`,
   'ping -n 600 127.0.0.1 > nul',
 ].join('\r\n'));
 
 let tag = null;
 try {
   step('open a session window whose claude is the stub');
-  const w = openSessionWindow({ sessionId: 'AAA-session', cwd: work, claude: stub });
+  const w = openSessionWindow({ sessionId: 'AAA-session', cwd: work, claude: stub, plugins: [pluginDir], env: { BRAINSTORM_LIVE: join(work, 'live.json') } });
   tag = w.tag;
   check(!!tag, 'window opened', `tag ${tag} via ${w.host}`);
 
   const first = await waitFor(() => existsSync(argLog) && readFileSync(argLog, 'utf8').includes('--resume AAA-session'));
   check(!!first, 'the stub was started with --resume AAA-session');
+  const raw = existsSync(argLog) ? readFileSync(argLog, 'utf8').split(/\r?\n/)[0] : '';
+  check(raw.includes(`--plugin-dir "${pluginDir}"`), 'claude got --plugin-dir with the mod folder as ONE argument, quoted', raw.trim());
+  const envSeen = await waitFor(() => existsSync(envLog) && readFileSync(envLog, 'utf8').trim());
+  check(envSeen && envSeen.split(/\r?\n/)[0].trim() === join(work, 'live.json'), 'claude inherited BRAINSTORM_LIVE from the runner', String(envSeen).split(/\r?\n/)[0]);
 
   const runnerPid = await waitFor(() => {
     const m = windowLog(tag).match(/runner started pid (\d+)/);
@@ -93,6 +106,15 @@ try {
   const lines = readFileSync(argLog, 'utf8').split(/\r?\n/).filter(Boolean);
   check(lines.length === 2, 'exactly two starts, AAA then BBB', JSON.stringify(lines.map((l) => l.trim())));
 
+  step('a switch uses the launch settings as they are NOW');
+  // ⛔ the window kept the claude it was opened with: a claudePath corrected
+  // since (a stub left there by a crashed test) never reached an open window
+  const sw2 = resumeInWindow(tag, 'CCC-session', { claude: stub2, claudeArgs: '', plugins: [], env: {} });
+  check(sw2.wasRunning && sw2.ended, 'the running claude was ended');
+  const third = await waitFor(() => existsSync(argLog2) && readFileSync(argLog2, 'utf8').includes('--resume CCC-session'));
+  check(!!third, 'it started the claude the settings name now, not the one the window opened with');
+  check(!readFileSync(argLog, 'utf8').includes('CCC-session'), 'the claude it was opened with was not started again');
+
   step('stop the window');
   const st = stopWindow(tag, { close: true });
   check(st.ended, 'stop ended the running stub');
@@ -102,7 +124,7 @@ try {
   // The terminal is put back every time claude ends -- a hard kill leaves
   // claude's mouse reporting on, and every drag then types "[555;102;30M".
   const resets = (windowLog(tag).match(/terminal reset/g) || []).length;
-  check(resets === 2, 'the terminal was reset after each claude ended (killed by the switch, and by the stop)', `${resets} reset(s)`);
+  check(resets === 3, 'the terminal was reset after each claude ended (killed by two switches, and by the stop)', `${resets} reset(s)`);
 
   const closed = await waitFor(() => /closing the window/.test(windowLog(tag)));
   check(!!closed, 'close: true closes the window instead of leaving a stray shell');

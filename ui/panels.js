@@ -376,6 +376,17 @@
     // flush the active editor first, exactly as Save does
     const t = activeTab();
     if (t && t.kind === 'block' && !t.readonly) await api('/api/block', { id: t.id, text: t.text });
+    // the same warning as Save: Save & Resume saves an edited message too, and
+    // a rewind in the resumed claude would delete it
+    const mainTab = S.tabs.find((x) => x.kind === 'main' && x.dirty);
+    if (mainTab) await saveMain(mainTab);
+    try { S.state = await api('/api/state'); } catch { /* the call below reports it */ }
+    const risky = rewindRisk();
+    if (risky.length) {
+      const choice = await rewindWarning(risky);
+      if (choice === 'cancel') { status('not saved — nothing was resumed'); return; }
+      if (choice === 'main') await moveToMain(risky);
+    }
     status('saving, building, installing…');
     termWrite('$ save & resume', 'cmd');
     try {
@@ -390,6 +401,8 @@
       for (const tab of S.tabs) tab.dirty = false;
       S.tabs = S.tabs.filter((x) => x.kind !== 'block');
       S.state = r.state;
+      const mt = S.tabs.find((x) => x.kind === 'main');
+      if (mt && r.state?.main) mt.meta = mainMeta(r.state.main);
       renderAll();
       renderProblems({ ok: true, summary: r.summary, out: r.out, diff: [] });
       const w = r.window;

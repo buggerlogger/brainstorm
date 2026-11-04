@@ -61,6 +61,8 @@ function frame(f) {
     tokens: 0,
     text: f.text || '',
     source: f.source || null,      // { line } in the transcript, when known
+    blockLine: f.blockLine ?? null, // the message record its block lives on
+    blockWhy: f.blockWhy || null,   // when blockLine is null: ambiguous | none
     resolved: f.resolved || 'exact',
     cache: f.cache || null,
     path: f.path || '',
@@ -76,6 +78,19 @@ function frame(f) {
 export function traceFlow(records, charsPerToken = FALLBACK_RATIO) {
   const { shapes, blobs, requests } = indexRequests(records);
   const chain = chainMessages(records);
+  // Every conversation part by kind and exact text, for the edit pen: a part
+  // the request records rebuilt finds its block here when its own message is
+  // unknown, or holds it in another record (one content block per line).
+  // Only a text that occurs ONCE counts -- with two, a pen would guess.
+  const partIndex = new Map();
+  for (const cm of chain) {
+    for (const p of cm.parts || []) {
+      if (!p.line || !p.text) continue;
+      const k = JSON.stringify([p.kind, p.text]);
+      const hit = partIndex.get(k);
+      if (hit) hit.count++; else partIndex.set(k, { line: p.line, count: 1 });
+    }
+  }
   const ratio = charsPerToken > 0 ? charsPerToken : FALLBACK_RATIO;
 
   if (!requests.length) return reconstructFlow(chain, ratio);
@@ -153,6 +168,10 @@ export function traceFlow(records, charsPerToken = FALLBACK_RATIO) {
           hash: h,
           message: blob.message,
           source: { line: blob.line },
+          // the chain message it consumed: NOT chainMessage, which would make
+          // partsOf show the record's text instead of what the API was sent.
+          // Only the edit pen reads it, to find the block's line.
+          chainTwin: consumed ? chain[chainPtr - 1] : null,
           resolved: consumed ? 'blob+chain' : 'blob',
         };
         seen.set(h, entry);
@@ -185,8 +204,24 @@ export function traceFlow(records, charsPerToken = FALLBACK_RATIO) {
       }
       const parts = m.blobParts || partsOf(m);
       const role = m.chainMessage?.role || m.message?.role || 'unknown';
+      // ⛔ A part rebuilt from the request records carries no line of its own:
+      // the line it gets is the REQUEST record's, while the block that holds
+      // it is on the conversation's message record. MEASURED: 10,325 of the
+      // message frames of one session pointed at an api-request-blob line, so
+      // the edit pen opened nothing. Its twin among the chain message's parts
+      // (same kind, same text) has the right line. A part with no twin -- a
+      // reminder the client added to the request -- has no block: null.
+      const chainParts = m.chainMessage?.parts || m.chainTwin?.parts || [];
+      const twinOf = (p) => {
+        if (p.line) return p;
+        const same = chainParts.filter((c) => c.kind === p.kind);
+        return same.find((c) => c.text === p.text)
+          || same.find((c) => c.text && p.text && (p.text.includes(c.text) || c.text.includes(p.text)))
+          || (() => { const g = p.text ? partIndex.get(JSON.stringify([p.kind, p.text])) : null; return g && g.count === 1 ? g : null; })();
+      };
       parts.forEach((p, pi) => {
         const path = `messages.${mi}.content.${pi}`;
+        const twin = twinOf(p);
         frames.push(frame({
           kind: p.kind === 'tool_use' ? 'tool_call' : p.kind === 'tool_result' ? 'tool_result' : 'message',
           label: `messages[${mi}].${role} ${p.kind}${p.tool ? ` ${p.tool}` : ''}`,
@@ -194,6 +229,10 @@ export function traceFlow(records, charsPerToken = FALLBACK_RATIO) {
           chars: chars(p.text),
           text: p.text || '',
           source: p.line ? { line: p.line } : m.source,
+          blockLine: twin?.line ?? null,
+          // no twin: the same text is in several messages (a pen must not
+          // guess), or in none (the client added it to the request)
+          blockWhy: twin ? null : (partIndex.get(JSON.stringify([p.kind, p.text]))?.count > 1 ? 'ambiguous' : 'none'),
           resolved: m.resolved,
           cache: marks.get(path) || null,
           path,

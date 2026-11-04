@@ -123,7 +123,9 @@ try {
     if (c1.out.includes(ALPHA.code) || !apiError(c1.out)) break;
     console.log(`    attempt ${attempt}: the Claude API returned an error; retrying`);
   }
-  const last = c1.out.trim().split('\n').pop();
+  // on an API error, the line that says WHAT failed, not only its message id
+  const outLines = c1.out.trim().split('\n');
+  const last = (apiError(c1.out) && outLines.find((l) => /API Error/i.test(l))) || outLines.pop();
   check(c1.out.includes(ALPHA.code), 'control answer quotes the ALPHA code',
     apiError(c1.out) && !c1.out.includes(ALPHA.code) ? `the Claude API kept failing (not a brainstorm error): ${last}` : last);
   if (!c1.out.includes(ALPHA.code)) throw new Error('control failed; the swap test would be meaningless');

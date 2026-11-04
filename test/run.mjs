@@ -16,8 +16,8 @@
 import { spawnSync, spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, mkdtempSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
@@ -27,6 +27,15 @@ const PORT = 7799;
 const EXE_PORT = 7798;
 
 let failed = 0;
+// ⛔ A test run gets an app data folder of its OWN. The servers and windows
+// the tests start used to share the person's: settings, session windows,
+// live.json. When a server crashed mid-test, save-resume's stub claude was
+// left as the claudePath setting -- MEASURED: the person's next terminal ran
+// the stub (it prints nothing and waits) instead of claude. Every child
+// inherits this; tests that need a home of their own still set one.
+if (!process.env.BRAINSTORM_HOME) process.env.BRAINSTORM_HOME = mkdtempSync(join(tmpdir(), 'bs-test-home-'));
+console.log(`app data for this run: ${process.env.BRAINSTORM_HOME}`);
+
 const results = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -117,6 +126,9 @@ run('zip + export', 'export.test.mjs');
 // recorder: replayed transcripts, so it needs no claude and no network
 run("recorder: live calls match the transcript", "recorder.test.mjs");
 run("recorder: double start + overlapping ticks", "recorder-concurrency.test.mjs");
+// live hooks: the feed, live.json, adopting a terminal -- its own server, no claude
+run("live hooks: feed, live.json, adopting a terminal", "live.test.mjs");
+run("main context: survives a rewind, paused by a compaction", "pins.test.mjs");
 
 // 3. everything that needs a server
 if (ALL) {
@@ -134,6 +146,8 @@ if (ALL) {
   }
   run('presence: background window keeps the app alive', 'presence.test.mjs');
   run('session window switches in place', 'window.test.mjs');
+  run('editing from the debugger, the rewind warning, resizable panes', 'edit-e2e.test.mjs');
+  run('live hooks inside a real claude (brainstorm-live mod)', 'live-mod.test.mjs');
   run('the REAL claude in the session window', 'real-claude-window.test.mjs');
   run('skill swap (two real claude sessions)', 'skillswap.test.mjs');
 }
