@@ -152,6 +152,10 @@ function renderTree() {
       frag.appendChild(sn);
     }
     for (const g of S.state.groups) {
+      // the Not sent folder is the one whose blocks are ALL off claude's path
+      // (the server files every one of them there): known by its blocks, not
+      // by its title, which is wording that can change
+      if (window.brainstorm?.settings?.hideNotSent && g.blocks.length && g.blocks.every((b) => b.sent === false)) continue;
       const key = `g:${g.name}`;
       const open = S.expanded.has(key);
       frag.appendChild(node({
@@ -256,6 +260,9 @@ function renderTabs() {
 function renderEditor() {
   const t = activeTab();
   const ed = $('#editor');
+  // read-only tabs (a request's details, a frame) are what people paste into
+  // bug reports: one click copies the whole text
+  $('#btn-copy-tab').hidden = !(t && t.readonly);
   if (!t) {
     ed.value = '';
     ed.readOnly = true;
@@ -820,6 +827,11 @@ function addPen(n, frame) {
   return n;
 }
 (window.brainstorm = window.brainstorm || {}).editFrame = editFromFrame;
+
+$('#btn-copy-tab').addEventListener('click', () => {
+  const t = activeTab();
+  if (t) window.brainstorm.menu.copy(t.text);
+});
 
 async function rewind(blockId, title) {
   const ok = await askConfirm(

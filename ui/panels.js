@@ -50,6 +50,8 @@
     $('#opt-wrap').checked = !!s.wrap;
     $('#editor').classList.toggle('wrap', !!s.wrap);
     $('#gutter').classList.toggle('wrap', !!s.wrap);
+    // hideNotSent takes effect at once, without reopening the session
+    if (S.state?.open) renderTree();
   }
 
   async function loadSettings() {

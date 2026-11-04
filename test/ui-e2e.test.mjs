@@ -215,6 +215,44 @@ try {
   await cdp.eval(`document.querySelector('.act[data-view="settings"]').click()`);
   check(await waitFor(cdp, `document.querySelectorAll('#settings-form [data-key]').length > 10`), 'the settings form renders from the schema');
 
+  step('hide the Not sent folder (issue #3)');
+  // The session opened above may have nothing rewound or compacted, so one
+  // not-sent folder is put in the page's state: there is always one to hide.
+  await cdp.eval(`(()=>{ if (!S.state.groups.some((g)=>g.blocks.length&&g.blocks.every((b)=>b.sent===false)))
+    S.state.groups.push({ name: 'Not sent (rewound or compacted away)', blocks: [{ id: 999999, kind: 'text', role: 'user', title: 'rewound away', chars: 12, keep: true, sent: false, line: 1 }] });
+    renderTree(); })()`);
+  const notSentShown = `[...document.querySelectorAll('#tree .node[data-folder]')].some((n)=>n.dataset.folder.startsWith('Not sent'))`;
+  check(await cdp.eval(notSentShown), 'the Not sent folder is in the tree');
+  check(await cdp.eval(`!!document.querySelector('#settings-form [data-key="hideNotSent"]')`), 'Settings has the switch');
+  const countBefore = await cdp.eval(`document.querySelector('#st-blocks').textContent`);
+  const saveHide = (on) => cdp.eval(`(()=>{ document.querySelector('#settings-form [data-key="hideNotSent"]').checked = ${on}; document.querySelector('#settings-save').click(); })()`);
+  await saveHide(true);
+  check(await waitFor(cdp, `!(${notSentShown})`), 'saving it on hides the folder, without reopening the session');
+  check(await cdp.eval(`document.querySelector('#st-blocks').textContent`) === countBefore, 'the block count still counts every block', countBefore);
+  await saveHide(false);
+  check(await waitFor(cdp, notSentShown), 'turning it off brings the folder back');
+
+  step('a Copy button on read-only tabs (issue #2)');
+  // one request in the Live panel, posted the way the brainstorm-live mod does
+  const sid = await cdp.eval(`S.state.config.sessionId`);
+  const t0 = Date.now();
+  const hook = { sessionId: sid, events: [
+    { type: 'step.start', at: t0, turnId: 'e2e', step: 0, model: 'm', messageCount: 3 },
+    { type: 'step.first', at: t0 + 5, turnId: 'e2e', step: 0 },
+    { type: 'step.end', at: t0 + 10, turnId: 'e2e', step: 0, stopReason: 'end_turn', usage: { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } },
+  ] };
+  await cdp.eval(`fetch('/api/hook',{method:'POST',headers:{'content-type':'application/json'},body:${JSON.stringify(JSON.stringify(hook))}}).then((r)=>r.ok)`);
+  check(await waitFor(cdp, `(brainstorm.live()?.steps||[]).some((s)=>s.turnId==='e2e')`), 'the Live panel has the request');
+  await cdp.eval(`brainstorm.openLiveStep(brainstorm.live().steps.find((s)=>s.turnId==='e2e'))`);
+  check(await waitFor(cdp, `activeTab()?.readonly && !document.querySelector('#btn-copy-tab').hidden`), 'its details tab shows a Copy button');
+  // headless Edge has no clipboard: the page's writeText records what it is given
+  await cdp.eval(`Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async (t) => { window.__copied = t; } })`);
+  await cdp.eval(`document.querySelector('#btn-copy-tab').click()`);
+  check(await waitFor(cdp, `window.__copied === activeTab().text && window.__copied.includes('cache read')`), 'Copy puts exactly the tab\'s text on the clipboard');
+  check(await waitFor(cdp, `document.querySelector('#st-msg').textContent === 'copied ' + activeTab().text.length + ' chars'`), 'and the status bar says how many characters', await cdp.eval(`document.querySelector('#st-msg').textContent`));
+  await cdp.eval(`openBlock(S.state.groups.find((g)=>g.blocks.some((b)=>b.sent!==false)).blocks.find((b)=>b.sent!==false).id)`);
+  check(await waitFor(cdp, `activeTab()?.kind === 'block' && !activeTab().readonly && document.querySelector('#btn-copy-tab').hidden`), 'an editable block tab has no Copy button');
+
   step('recording view');
   await cdp.eval(`document.querySelector('.act[data-view="recording"]').click()`);
   check(await cdp.eval(`!document.querySelector('.view[data-view="recording"]').hidden`), 'the Recording view opens');

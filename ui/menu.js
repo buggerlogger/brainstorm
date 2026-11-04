@@ -253,5 +253,5 @@
     if (e.key === 'Enter' && sel >= 0) { e.preventDefault(); run(sel); }
   }, true);
 
-  B.menu = { open, close };
+  B.menu = { open, close, copy };
 })();

@@ -53,6 +53,9 @@ export const SCHEMA = [
   { key: 'autoAttach', group: 'Debugger', type: 'bool', default: true,
     label: 'Auto-attach to new sessions in the project',
     help: 'Skipped while there are unsaved edits.' },
+  { key: 'hideNotSent', group: 'Debugger', type: 'bool', default: false,
+    label: 'Hide the "Not sent" folder in the tree',
+    help: 'Blocks on no path claude resumes (a branch you rewound away from, everything before a /compact) are filed in a folder of their own: editing them changes nothing claude is sent. Hidden, the tree shows only what claude is sent; the block count in the status bar still counts every block.' },
 
   // --- export ---
   // Exports follow BRAINSTORM_HOME like every other write (each test run sets
