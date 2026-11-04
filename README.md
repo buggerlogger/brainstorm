@@ -3,9 +3,7 @@
 > **⚠ Not done yet.** This project is a work in progress. Features are still
 > being built and changed, and nothing here is a release.
 >
-> **Open source — [Apache-2.0](LICENSE).** Created by
-> [buggerlogger](https://github.com/buggerlogger). Use it, fork it, change it,
-> put it in your own project. Keep the credit: see [Credit](#credit).
+
 
 
 
@@ -498,3 +496,4 @@ A one-line credit in your own README is appreciated:
 ```
 Based on brainstorm by buggerlogger — https://github.com/buggerlogger/brainstorm
 ```
+
