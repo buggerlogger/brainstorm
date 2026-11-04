@@ -19,6 +19,11 @@ node bin/brainstorm.mjs flow ...     the context flow on the command line
 node bin/brainstorm.mjs build ...    the engine, unchanged
 ```
 
+## BUG HUNTING TESTING ...
+
+<img width="1919" height="1064" alt="image" src="https://github.com/user-attachments/assets/49dcce80-6958-42f1-9898-1b7c9ea5f3d8" />
+
+
 ## The loop
 
 1. **Start.** The app opens blurred, asking for a session. Type an id, an id
