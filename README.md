@@ -14,8 +14,9 @@
   <a href="https://github.com/buggerlogger/brainstorm/commits/master"><img alt="last commit" src="https://img.shields.io/github/last-commit/buggerlogger/brainstorm?style=flat-square"></a>
   <a href="#status"><img alt="status: beta" src="https://img.shields.io/badge/status-beta-orange?style=flat-square"></a>
 </p>
-
+<p align="center"><br/>
 <code>npx github:buggerlogger/brainstorm setup</code>
+
 
 **See exactly what Claude Code sends to the model. Edit it. Resume.**
 
