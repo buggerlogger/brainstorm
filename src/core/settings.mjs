@@ -55,7 +55,13 @@ export const SCHEMA = [
     help: 'Skipped while there are unsaved edits.' },
 
   // --- export ---
-  { key: 'exportDir', group: 'Export', type: 'path', default: join(homedir(), 'Desktop', 'brainstorm-exports'),
+  // Exports follow BRAINSTORM_HOME like every other write (each test run sets
+  // it), so a test never drops a zip on the person's Desktop. A setting
+  // chosen by hand in settings.json still wins over both defaults.
+  { key: 'exportDir', group: 'Export', type: 'path',
+    default: process.env.BRAINSTORM_HOME
+      ? join(process.env.BRAINSTORM_HOME, 'exports')
+      : join(homedir(), 'Desktop', 'brainstorm-exports'),
     label: 'Export folder' },
   { key: 'exportFlow', group: 'Export', type: 'enum', default: 'last', options: ['none', 'last', 'all'],
     label: 'Include the context flow',

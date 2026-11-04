@@ -117,6 +117,7 @@ console.log(`brainstorm tests  ${ALL ? '(all)' : '(fast; --all for the rest)'}${
 // 2. fast, no server
 run('ui wiring', 'ui.test.mjs');
 run('zip + export', 'export.test.mjs');
+run('export dir follows BRAINSTORM_HOME', 'export-home.test.mjs');
 {
   const t = findRecordedTranscript();
   if (t) run('flow (recorded mode)', 'flow.test.mjs', [t]);
