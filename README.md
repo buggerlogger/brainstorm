@@ -567,6 +567,17 @@ about text; it cannot invent a new way to corrupt a session.
 real claude, but interfaces, file formats and behaviour can still change.
 Releases: <https://github.com/buggerlogger/brainstorm/releases>.
 
+## Contributors
+
+<a href="https://github.com/buggerlogger/brainstorm/graphs/contributors"><img src="https://contrib.rocks/image?repo=buggerlogger/brainstorm" alt="contributors"></a>
+
+- [bfs2021](https://github.com/bfs2021): exports follow `BRAINSTORM_HOME`, so a
+  test run no longer leaves a zip on the Desktop
+  ([#5](https://github.com/buggerlogger/brainstorm/pull/5))
+
+Want to be on this list? Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[good first issues](https://github.com/buggerlogger/brainstorm/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+
 ## License
 
 brainstorm is open source under the [Apache License 2.0](LICENSE).
