@@ -42,23 +42,6 @@ the latest release instead, checked against the digest GitHub publishes.
 
 <!-- demo GIF goes here -->
 
-## What it showed us about Claude Code
-
-Measured on real sessions and the real API while building it:
-
-- **Clearing a compaction summary breaks the session**: `400 messages.0: user
-  messages must have non-empty content`. Dropping it instead works. brainstorm
-  never writes an empty message.
-- **On one real session, 37 of 360 messages were never sent**: branches you
-  rewound away from, and everything before a compaction, stay in the file.
-  Editing them changes nothing; brainstorm files them apart.
-- **`/compact` makes its own model request**, invisible to the normal request
-  hooks: 47,741 -> 15,602 tokens in 35 s.
-- **Claude Code asks the API to leave the thinking text out** (`"display":
-  "omitted"`): you can see when it thinks and for how long, never the words.
-- **Editing the conversation does not change claude's memory files**: when the
-  two disagreed, claude said so.
-
 ## Features
 
 - **Context editor**: every block of the context, grouped; edit, drop or pin it.
