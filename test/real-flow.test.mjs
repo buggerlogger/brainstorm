@@ -24,6 +24,7 @@
 // transcripts are removed at the end.
 
 import { spawn, spawnSync } from 'node:child_process';
+import { runClaude } from './claude-cli.mjs';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
@@ -53,7 +54,7 @@ const lines = (s) => s.split('\n').map((l) => l.trim()).filter(Boolean);
 function claude(prompt, args = [], { retries = 2 } = {}) {
   let out = '';
   for (let i = 0; i <= retries; i++) {
-    const r = spawnSync('claude', ['-p', `"${prompt}"`, ...args], { cwd: W, env, shell: true, encoding: 'utf8', input: '', maxBuffer: 32 * 1024 * 1024, timeout: 300000 });
+    const r = runClaude(['-p', prompt, ...args], { cwd: W, env, encoding: 'utf8', input: '', maxBuffer: 32 * 1024 * 1024, timeout: 300000 });
     out = `${r.stdout || ''}${r.stderr || ''}`.trim();
     if (!apiError(out) || /400/.test(out)) break;   // a 400 is OURS: never retried away
     console.log(`    the Claude API returned an error; retrying (${i + 1})`);

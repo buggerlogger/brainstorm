@@ -23,6 +23,7 @@
 
 import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { runClaude } from './claude-cli.mjs';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -81,12 +82,11 @@ function skillFile(p) {
   ].join('\n');
 }
 
-// claude is an npm shim on Windows, so it needs a shell to resolve.
+// claude is an npm shim on Windows: runClaude starts it without shell:true.
 function claude(args) {
-  const r = spawnSync('claude', args, {
+  const r = runClaude(args, {
     cwd: WORK,
     encoding: 'utf8',
-    shell: true,
     maxBuffer: 64 * 1024 * 1024,
   });
   return { code: r.status, out: `${r.stdout || ''}${r.stderr || ''}` };
@@ -116,7 +116,7 @@ try {
   for (let attempt = 1; attempt <= 3; attempt++) {
     if (attempt > 1) SESSION = randomUUID();
     c1 = claude([
-      '-p', `"Invoke the ${ALPHA.id} skill now, then reply with one line: the protocol name and its clearance code."`,
+      '-p', `Invoke the ${ALPHA.id} skill now, then reply with one line: the protocol name and its clearance code.`,
       '--session-id', SESSION,
       '--permission-mode', 'bypassPermissions',
     ]);
@@ -203,7 +203,7 @@ try {
   step('resume the edited session and ask for BODY-ONLY facts');
   const c2 = claude([
     '-p', '--resume', NEW_ID,
-    '"Without reading any files and without invoking a skill, answer from the protocol skill already loaded in this conversation: give the protocol name, clearance code, staging host, and the exact shutdown sequence."',
+    'Without reading any files and without invoking a skill, answer from the protocol skill already loaded in this conversation: give the protocol name, clearance code, staging host, and the exact shutdown sequence.',
     '--permission-mode', 'bypassPermissions',
   ]);
   const ans = c2.out;

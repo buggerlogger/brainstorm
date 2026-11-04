@@ -14,7 +14,8 @@
 // Read call with its arguments before it ran and what came back, the usage,
 // and the end of the turn.
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { runClaude } from './claude-cli.mjs';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -64,11 +65,11 @@ try {
   for (let attempt = 1; attempt <= 3; attempt++) {
     await fetch(`${BASE}/api/hooks`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'clear' }) });
     t0 = Date.now();
-    const r = spawnSync('claude', [
-      '-p', '"Read note.txt, then work out which of its numbers is prime. Reply with just that number."',
-      '--plugin-dir', `"${MOD}"`,
+    const r = runClaude([
+      '-p', 'Read note.txt, then work out which of its numbers is prime. Reply with just that number.',
+      '--plugin-dir', MOD,
       '--permission-mode', 'bypassPermissions',
-    ], { cwd: work, env, shell: true, encoding: 'utf8', input: '', maxBuffer: 16 * 1024 * 1024, timeout: 240000 });
+    ], { cwd: work, env, encoding: 'utf8', input: '', maxBuffer: 16 * 1024 * 1024, timeout: 240000 });
     out = `${r.stdout || ''}${r.stderr || ''}`;
     if (out.includes('37') || !apiError(out)) break;
     console.log(`    attempt ${attempt}: the Claude API returned an error; retrying`);
@@ -116,7 +117,7 @@ try {
   await fetch(`${BASE}/api/hooks`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'clear' }) });
   const env2 = { ...env, BRAINSTORM_HOME: home };
   delete env2.BRAINSTORM_LIVE;
-  spawnSync('claude', ['-p', '"Reply with one word: ok"', '--plugin-dir', `"${MOD}"`], { cwd: work, env: env2, shell: true, encoding: 'utf8', input: '', timeout: 240000 });
+  runClaude(['-p', 'Reply with one word: ok', '--plugin-dir', MOD], { cwd: work, env: env2, encoding: 'utf8', input: '', timeout: 240000 });
   await sleep(800);
   const live2 = await (await fetch(`${BASE}/api/hooks?since=0`)).json();
   check(live2.steps.length >= 1 && live2.turns.length >= 1, 'its request reached brainstorm all the same', `${live2.steps.length} request(s), ${live2.turns.length} turn(s)`);
