@@ -1,4 +1,6 @@
-+<h1 align="center"><img src="assets/banner.png" width="600" alt="brainstorm"></h1>
+<h3 align="center">See exactly what Claude Code sends to the model. Edit it. Resume.</h3>
+<p align="center"><br/>
+<h1 align="center"><img src="assets/banner.png" width="600" alt="brainstorm"></h1>
 
 <code>npx github:buggerlogger/brainstorm setup</code>
 
