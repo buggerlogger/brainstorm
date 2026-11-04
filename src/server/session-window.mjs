@@ -48,7 +48,8 @@ const paths = (tag) => ({
 // paths this module generated itself.
 const psq = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
-function runnerScript(tag) {
+// Exported for test/runner-reset.test.mjs, which runs pieces of it.
+export function runnerScript(tag) {
   const p = paths(tag);
   // Written as an array of lines so no shell ever re-parses it.
   return [
@@ -76,8 +77,22 @@ function runnerScript(tag) {
     // with bracketed paste, the alternate screen and a hidden cursor, and the
     // input already queued is thrown away so the garbage typed while claude
     // was gone never reaches the shell or the next claude.
+    //
+    // ⛔ ...but ?1049l (leave the alternate screen) also RESTORES THE SAVED
+    // CURSOR, alternate screen or not. MEASURED in a plain window: after it,
+    // output landed on row 1 (where a program had saved the cursor) or row 0
+    // (nothing saved), on top of what was there. So after every Save & Resume
+    // the runner's own reset sent the cursor back to where the old claude
+    // began, and the new claude drew over the old conversation: the chat
+    // "reset". It is sent only when claude may have been fullscreen; with
+    // keepChat the classic renderer is forced and there is no screen to leave.
+    // Then the cursor is where claude left it, at its input box, so 0J clears
+    // from there down: the dead claude's prompt box and status line, never the
+    // conversation above it. (Not without keepChat: the cursor may be at the
+    // top by then, and 0J would wipe everything.)
     'function Reset-Terminal {',
-    "  $modes = @('?1000l', '?1001l', '?1002l', '?1003l', '?1005l', '?1006l', '?1015l', '?2004l', '?1049l', '?25h', '0m')",
+    "  $modes = @('?1000l', '?1001l', '?1002l', '?1003l', '?1005l', '?1006l', '?1015l', '?2004l', '?25h', '0m')",
+    "  if ($env:CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN -ne '1') { $modes = @('?1049l') + $modes } else { $modes += '0J' }",
     "  [Console]::Write((($modes | ForEach-Object { [char]27 + '[' + $_ }) -join ''))",
     '  try { $Host.UI.RawUI.FlushInputBuffer() } catch { }',
     '}',

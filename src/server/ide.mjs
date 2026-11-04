@@ -537,12 +537,22 @@ function windowLaunch(settings) {
   if (settings.liveHooks !== false) {
     try { plugins = [liveModDir()]; } catch (err) { logLine(`live hooks off: ${err.message}`); }
   }
+  const env = plugins.length ? { BRAINSTORM_LIVE: liveFile() } : {};
+  // ⛔ After Save & Resume the new claude drew OVER the old conversation:
+  // the runner leaves a possible fullscreen screen with ESC[?1049l, and that
+  // also restores the saved cursor -- back to where the old claude began
+  // (measured in session-window.mjs). Forcing the classic renderer means
+  // there is never a fullscreen screen to leave, so the runner skips it and
+  // the resumed claude starts below what is on screen. Off sends '': the
+  // runner only sets variables, and an empty one is how PowerShell removes it,
+  // so turning this off reaches a window that already has it on.
+  env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = settings.keepChat !== false ? '1' : '';
   return {
     shell: settings.shell,
     claudeArgs: settings.claudeArgs,
     claude: settings.claudePath || 'claude',
     plugins,
-    env: plugins.length ? { BRAINSTORM_LIVE: liveFile() } : {},
+    env,
   };
 }
 

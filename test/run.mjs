@@ -133,6 +133,7 @@ run("main context: survives a rewind, paused by a compaction", "pins.test.mjs");
 run("build rules: never an empty message; a dropped call takes its result", "build-rules.test.mjs");
 run("after a rewind or a /compact in claude: what is sent, where pins go", "rewind-compact.test.mjs");
 run("the Live feed through a /compact; requests that never ended", "live-compact.test.mjs");
+run("Save & Resume restarts claude below the chat, not over it", "runner-reset.test.mjs");
 
 // 3. everything that needs a server
 if (ALL) {
