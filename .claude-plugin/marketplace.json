@@ -1,0 +1,14 @@
+{
+  "name": "brainstorm",
+  "description": "brainstorm: a context debugger and editor for Claude Code. This marketplace holds its live-hooks plugin.",
+  "owner": {
+    "name": "buggerlogger"
+  },
+  "plugins": [
+    {
+      "name": "brainstorm-live",
+      "source": "./mod/brainstorm-live",
+      "description": "See what Claude Code is doing while it does it: each model request as it streams (waiting, thinking, writing), each tool call before it runs, the cache usage and every /compact -- shown live in the brainstorm app."
+    }
+  ]
+}

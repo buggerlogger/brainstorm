@@ -108,6 +108,18 @@ try {
   }
   const turn = live.turns[live.turns.length - 1];
   check(turn && turn.reason === 'answer' && turn.durationMs > 0, 'the turn ended with an answer', turn ? `${turn.durationMs} ms` : 'none');
+
+  step('installed from the marketplace: no BRAINSTORM_LIVE, it finds brainstorm by itself');
+  // what a marketplace install looks like: nothing tells the mod where
+  // brainstorm is, so it looks where the app keeps its data (BRAINSTORM_HOME
+  // here, so the person's own app is never the one that hears it)
+  await fetch(`${BASE}/api/hooks`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'clear' }) });
+  const env2 = { ...env, BRAINSTORM_HOME: home };
+  delete env2.BRAINSTORM_LIVE;
+  spawnSync('claude', ['-p', '"Reply with one word: ok"', '--plugin-dir', `"${MOD}"`], { cwd: work, env: env2, shell: true, encoding: 'utf8', input: '', timeout: 240000 });
+  await sleep(800);
+  const live2 = await (await fetch(`${BASE}/api/hooks?since=0`)).json();
+  check(live2.steps.length >= 1 && live2.turns.length >= 1, 'its request reached brainstorm all the same', `${live2.steps.length} request(s), ${live2.turns.length} turn(s)`);
 } catch (err) {
   console.error(`\n  ERROR  ${err.stack || err.message}`);
   failures++;

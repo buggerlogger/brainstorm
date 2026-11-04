@@ -25,7 +25,9 @@
 // Where to post comes from brainstorm's live file (BRAINSTORM_LIVE names it;
 // the session window sets it) and is read again when a post fails: brainstorm can be
 // closed and opened on a new port while this claude keeps running, and the
-// events find the new one.
+// events find the new one. Installed from the marketplace into any claude,
+// nothing sets BRAINSTORM_LIVE: the app's own live.json is used, where the app
+// writes it. With no brainstorm running there is no file, and nothing is sent.
 
 import type { Register, EngineInterface } from 'claude-code'
 
@@ -50,6 +52,26 @@ let sessionId = ''
 let queue: Ev[] = []
 let flushing = false
 let seq = 0
+// This copy of the mod. Two can run in one claude -- brainstorm's own
+// (--plugin-dir) and one installed from the marketplace -- and both post every
+// event; brainstorm keeps one copy's per session.
+const SRC = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+
+// brainstorm's live.json: BRAINSTORM_LIVE when a session window set it, else
+// BRAINSTORM_HOME's, else where the app keeps its data on this platform.
+async function findLiveFile($: EngineInterface): Promise<string | undefined> {
+  const named = await $.env.get('BRAINSTORM_LIVE')
+  if (named) return named
+  const home = await $.env.get('BRAINSTORM_HOME')
+  if (home) return `${home}/live.json`
+  const appdata = await $.env.get('APPDATA')
+  if (appdata) return `${appdata}/brainstorm/live.json`
+  const user = await $.env.get('HOME')
+  if (!user) return undefined
+  const mac = `${user}/Library/Application Support/brainstorm/live.json`
+  if (await $.fs.exists(mac).catch(() => false)) return mac
+  return `${(await $.env.get('XDG_CONFIG_HOME')) || `${user}/.config`}/brainstorm/live.json`
+}
 
 async function target($: EngineInterface): Promise<string | undefined> {
   if (!livePath) return undefined
@@ -79,7 +101,7 @@ async function flush($: EngineInterface) {
         .fetch(`${url}/api/hook`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sessionId, events }),
+          body: JSON.stringify({ sessionId, src: SRC, events }),
         })
         .catch(() => null)
       if (!r?.ok) base = undefined // closed or moved: read the file again
@@ -97,7 +119,7 @@ function send($: EngineInterface, ev: Ev) {
 
 export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
-    livePath = await $.env.get('BRAINSTORM_LIVE')
+    livePath = await findLiveFile($)
     sessionId = await $.session.id().catch(() => '')
     send($, { type: 'session.start', cwd: e.cwd, interactive: e.isInteractive })
     return next(e)

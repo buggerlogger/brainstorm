@@ -81,5 +81,19 @@ step('a newer request closes one that never ended');
   check(other.since(0).steps.find((s) => s.turnId === 'T6').endAt === null, 'but a subagent\'s request does not close the main loop\'s');
 }
 
+step('two copies of the mod in one claude: one copy\'s events are kept');
+{
+  // brainstorm's own copy (--plugin-dir) and one installed from the marketplace
+  const f = new LiveFeed();
+  const a = f.ingest({ sessionId: S, src: 'copyA', events: [ev(1000, 'step.start', { turnId: 'T7', step: 0, model: 'm', messageCount: 3 })] });
+  const b = f.ingest({ sessionId: S, src: 'copyB', events: [ev(1001, 'step.start', { turnId: 'T7', step: 0, model: 'm', messageCount: 3 })] });
+  check(a.accepted === 1 && b.accepted === 0 && b.duplicate === true, 'the second copy is not counted twice', JSON.stringify({ a: a.accepted, b: b.accepted }));
+  check(f.since(0).steps.length === 1, 'one request, not two');
+  const other = f.ingest({ sessionId: 'another-session', src: 'copyB', events: [ev(1002, 'turn.start', { turnId: 'X' })] });
+  check(other.accepted === 1, 'a copy is only refused for a session another copy holds');
+  const old = f.ingest({ sessionId: S, events: [ev(1003, 'turn.start', { turnId: 'Y' })] });
+  check(old.accepted === 1, 'an older mod (no src) is always taken');
+}
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);
 process.exit(failures ? 1 : 0);

@@ -603,7 +603,13 @@ function residueNeedles(pairs) {
   const add = (text, how) => {
     if (text && text.length >= 12 && !needles.some((x) => x.text === text)) needles.push({ text, how });
   };
-  for (const [from] of pairs) {
+  for (const [from, to] of pairs) {
+    // ⛔ An edit that only ADDED text -- a pin or the main context appended to
+    // a block -- removed nothing, so the old text surviving is no residue: it
+    // is still inside the new text by design. Counting it raised a red
+    // "PROBLEMS 13" after a clean Save & Resume (measured: 13 copies of a
+    // prompt the main context had been appended to).
+    if (typeof to === 'string' && to.includes(from)) continue;
     add(from, 'full');
     if (from.length > RESIDUE_PREFIX) {
       const pre = from.slice(0, RESIDUE_PREFIX);

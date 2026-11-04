@@ -1,23 +1,66 @@
 # brainstorm
 
-> **⚠ Not done yet.** This project is a work in progress. Features are still
-> being built and changed, and nothing here is a release.
->
+**See exactly what Claude Code sends to the model. Edit it. Resume.**
 
+brainstorm is a context debugger and editor for Claude Code. Open any session
+and see every block of its context as claude is sent it; watch each request
+live (waiting for the API, thinking, writing, tool calls, the prompt cache);
+change, drop or pin anything; then **Save & Resume**: claude restarts on the
+edited session in the same terminal, and you keep working.
 
+**[Download brainstorm.exe](https://github.com/buggerlogger/brainstorm/releases/latest)**
+-- Windows, one file, nothing to install. **Beta**: it works end to end and is
+tested against a real claude, but it is still changing.
 
+<!-- demo GIF goes here -->
 
-## BUG HUNTING TESTING (claude-opus-5.5) ... 
+## What it showed us about Claude Code
+
+Measured on real sessions and the real API while building it:
+
+- **Clearing a compaction summary breaks the session**: `400 messages.0: user
+  messages must have non-empty content`. Dropping it instead works. brainstorm
+  never writes an empty message.
+- **On one real session, 37 of 360 messages were never sent**: branches you
+  rewound away from, and everything before a compaction, stay in the file.
+  Editing them changes nothing; brainstorm files them apart.
+- **`/compact` makes its own model request**, invisible to the normal request
+  hooks: 47,741 -> 15,602 tokens in 35 s.
+- **Claude Code asks the API to leave the thinking text out** (`"display":
+  "omitted"`): you can see when it thinks and for how long, never the words.
+- **Editing the conversation does not change claude's memory files**: when the
+  two disagreed, claude said so.
+
+## Features
+
+- **Context editor**: every block of the context, grouped; edit, drop or pin it.
+- **Main context**: facts that survive every rewind, put back into the first
+  message claude is sent on every build.
+- **Live, from inside claude**: each request as it streams, each tool call
+  before it runs, the cache read / written / new, and every `/compact`.
+- **Recording**: the calls claude makes from now on; every block has a pen that
+  opens it in the editor.
+- **Save & Resume**: build, verify, install, and restart claude in the same
+  window. The build refuses what the API would refuse.
+- **Agents**: subagents and forks, and who read what.
+
+## Only the live view, in any claude
+
+The live hooks are a Claude Code plugin of their own. Installed, any claude
+session streams into the brainstorm app while it runs:
+
+```
+/plugin install brainstorm-live --marketplace buggerlogger/brainstorm
+```
+
+## Example: bug hunting with a context template
 
 <img width="1280" height="719" alt="image" src="https://github.com/user-attachments/assets/da7c68c3-c024-488d-a824-a6a5553591af" />
 
 
 [CONTEXT TEMPLATE I USED IN SS](context-template/bugbountyhuntingcontext.md)
 
-A context debugger for Claude Code sessions, as a desktop app. Open a session,
-watch every API call it makes land in the debugger frame by frame, edit any of
-the context, and **Save & Resume** — claude restarts on the edited session in
-the same terminal window, and you keep working.
+## Run it
 
 ```
 dist\brainstorm.exe                  the app (one file, no install)
@@ -26,6 +69,7 @@ node bin/brainstorm.mjs flow ...     the context flow on the command line
 node bin/brainstorm.mjs build ...    the engine, unchanged
 ```
 
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## The loop
 
@@ -490,8 +534,9 @@ about text; it cannot invent a new way to corrupt a session.
 
 ## Status
 
-**Not done yet.** brainstorm is under active development. Interfaces, file
-formats and behaviour can change without notice, and there is no release.
+**Beta.** brainstorm works end to end, and each release is tested against a
+real claude, but interfaces, file formats and behaviour can still change.
+Releases: <https://github.com/buggerlogger/brainstorm/releases>.
 
 ## License
 

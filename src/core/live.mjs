@@ -33,6 +33,7 @@
 // reads for it.
 
 const CAP = 20000;    // the most text one step keeps per kind
+const OWNER_MS = 15000;  // quiet this long, and another copy of the mod takes over
 
 const cut = (s, n = CAP) => (s.length > n ? s.slice(s.length - n) : s);
 
@@ -47,6 +48,7 @@ export class LiveFeed {
     this.turns = new Map();   // turnId -> turn record
     this.compacting = null;   // the compaction running now
     this.compactions = [];    // the ones that ended, newest last
+    this.owners = new Map();  // sessionId -> the mod copy whose events are kept
     this.lastAt = 0;          // when the mod last posted (our clock)
   }
 
@@ -60,8 +62,20 @@ export class LiveFeed {
     }
   }
 
-  ingest({ sessionId = '', events = [] } = {}) {
+  ingest({ sessionId = '', src = null, events = [] } = {}) {
     const now = Date.now();
+    // Two copies of the mod can run in one claude: brainstorm's own (its
+    // terminals pass --plugin-dir) and one installed from the marketplace. Both
+    // post every event. The first copy heard for a session keeps it; another
+    // is taken only once that one has been quiet for OWNER_MS. A post with no
+    // src (an older mod) is always taken.
+    if (src && sessionId) {
+      const owner = this.owners.get(sessionId);
+      if (owner && owner.src !== src && now - owner.lastAt < OWNER_MS) {
+        return { ok: true, accepted: 0, duplicate: true, seq: this.seq };
+      }
+      this.owners.set(sessionId, { src, lastAt: now });
+    }
     let n = 0;
     for (const raw of Array.isArray(events) ? events : []) {
       if (!raw || typeof raw.type !== 'string') continue;

@@ -1,5 +1,12 @@
 {
   "name": "brainstorm-live",
   "version": "0.1.0",
-  "description": "Mirrors Claude Code's engine events (each model request as it streams, each tool call) to the brainstorm context debugger while they happen."
+  "description": "Mirrors Claude Code's engine events (each model request as it streams, each tool call) to the brainstorm context debugger while they happen.",
+  "author": {
+    "name": "buggerlogger",
+    "url": "https://github.com/buggerlogger"
+  },
+  "homepage": "https://github.com/buggerlogger/brainstorm",
+  "repository": "https://github.com/buggerlogger/brainstorm",
+  "license": "Apache-2.0"
 }

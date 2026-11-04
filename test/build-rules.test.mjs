@@ -152,5 +152,17 @@ step('edits that are fine are left alone');
   check(JSON.stringify(chain).includes('FACT-NEW') && !JSON.stringify(chain).includes('FACT-SUM'), 'the edit is what claude will be sent');
 }
 
+step('an edit that only ADDS text leaves no residue');
+{
+  // Claude Code keeps a copy of the last prompt in a `last-prompt` record: a
+  // mirror. Appending to the prompt (what the main context does) leaves the old
+  // text inside the new one -- that is no residue, and used to count as one.
+  const withMirror = [...base, { type: 'last-prompt', sessionId: SID, lastPrompt: 'final prompt' }];
+  const r = build('append', (bs) => { const b = bs.find((x) => x.line === 12); b.text = `${b.text}\n\nADDED-LATER`; }, withMirror);
+  check(r.code === 0 && /residue\s+0 \(no surviving/.test(r.out), 'build reports no residue for an append (it was 2 before the fix)', (r.out.match(/residue.*$/m) || [''])[0].trim());
+  const replace = build('replace', (bs) => { bs.find((x) => x.line === 12).text = 'a different prompt entirely'; }, withMirror);
+  check(/residue\s+0/.test(replace.out), 'a replacement is mirrored too, so nothing of it survives either', (replace.out.match(/residue.*$/m) || [''])[0].trim());
+}
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);
 process.exit(failures ? 1 : 0);
