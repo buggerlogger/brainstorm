@@ -7,6 +7,12 @@
 > [buggerlogger](https://github.com/buggerlogger). Use it, fork it, change it,
 > put it in your own project. Keep the credit: see [Credit](#credit).
 
+
+
+## BUG HUNTING TESTING ...
+
+<img width="1919" height="1064" alt="image" src="https://github.com/user-attachments/assets/49dcce80-6958-42f1-9898-1b7c9ea5f3d8" />
+
 A context debugger for Claude Code sessions, as a desktop app. Open a session,
 watch every API call it makes land in the debugger frame by frame, edit any of
 the context, and **Save & Resume** — claude restarts on the edited session in
@@ -18,10 +24,6 @@ node bin/app.mjs                     the same, from source
 node bin/brainstorm.mjs flow ...     the context flow on the command line
 node bin/brainstorm.mjs build ...    the engine, unchanged
 ```
-
-## BUG HUNTING TESTING ...
-
-<img width="1919" height="1064" alt="image" src="https://github.com/user-attachments/assets/49dcce80-6958-42f1-9898-1b7c9ea5f3d8" />
 
 
 ## The loop
