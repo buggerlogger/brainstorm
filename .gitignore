@@ -8,3 +8,5 @@ Thumbs.db
 dist/
 # the types claude writes beside a --plugin-dir mod it loads
 mod/*/.claude-plugin/types/
+# and the tsconfig.json it writes beside one that has none, extending those types
+mod/*/tsconfig.json
