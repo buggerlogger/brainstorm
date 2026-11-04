@@ -120,6 +120,18 @@ copyFileSync(process.execPath, EXE);
 if (IS_WIN) {
   const st = spawnSync('signtool', ['remove', '/s', EXE], { encoding: 'utf8' });
   if (st.status !== 0) console.log('   (signtool not available; the stale signature is left and simply fails validation)');
+
+  // The exe's own icon (Explorer, the taskbar, a shortcut) is
+  // assets/brainstorm.ico, set BEFORE the blob goes in so rewriting the
+  // resources cannot disturb it. rcedit is what Electron's packager uses; its
+  // npm package carries the exe, run as it is. ⛔ System32's tar, by relative
+  // paths: Git Bash's GNU tar first on PATH reads "C:\..." as a host named C.
+  step('icon');
+  const tools = join('dist', 'tools');
+  mkdirSync(join(ROOT, tools), { recursive: true });
+  run(IS_WIN ? 'npm.cmd' : 'npm', ['pack', 'rcedit@5.0.2', '--silent', '--pack-destination', tools]);
+  run(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-xzf', join(tools, 'rcedit-5.0.2.tgz'), '-C', tools]);
+  run(join(ROOT, tools, 'package', 'bin', 'rcedit-x64.exe'), [EXE, '--set-icon', join(ROOT, 'assets', 'brainstorm.ico')]);
 }
 run(npx, ['--yes', 'postject@1.0.0-alpha.6',
   EXE,

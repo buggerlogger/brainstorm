@@ -1,4 +1,4 @@
-# brainstorm
+<h1 align="center"><img src="assets/banner.png" width="600" alt="brainstorm"></h1>
 
 **See exactly what Claude Code sends to the model. Edit it. Resume.**
 
@@ -11,6 +11,18 @@ edited session in the same terminal, and you keep working.
 **[Download brainstorm.exe](https://github.com/buggerlogger/brainstorm/releases/latest)**
 -- Windows, one file, nothing to install. **Beta**: it works end to end and is
 tested against a real claude, but it is still changing.
+
+Or everything in one command (Node 22+): the latest code, the live plugin in
+Claude Code, and the app built into `Desktop\brainstorm-app`:
+
+```
+npx github:buggerlogger/brainstorm setup
+```
+
+Run it again to update. Node older than 24 cannot build the exe, so it takes
+the latest release instead, checked against the digest GitHub publishes.
+`--download` does that on purpose; `--no-plugin` leaves Claude Code alone;
+`--to <folder>` puts the app somewhere else.
 
 <!-- demo GIF goes here -->
 
@@ -65,6 +77,7 @@ session streams into the brainstorm app while it runs:
 ```
 dist\brainstorm.exe                  the app (one file, no install)
 node bin/app.mjs                     the same, from source
+npm run setup                        pull, install the plugin, build into Desktop\brainstorm-app
 node bin/brainstorm.mjs flow ...     the context flow on the command line
 node bin/brainstorm.mjs build ...    the engine, unchanged
 ```

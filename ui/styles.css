@@ -83,7 +83,7 @@ body {
   -webkit-user-select: none; user-select: none;
 }
 .title { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; }
-.title .logo { color: var(--blue); }
+.title .logo { width: 16px; height: 16px; flex: none; }
 #title-session { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 52vw; }
 .title-actions { display: flex; gap: 4px; }
 .chip {
@@ -379,7 +379,7 @@ body.resizing iframe, body.resizing .editor { pointer-events: none; }
   display: flex; flex-direction: column; max-height: 72vh;
 }
 .gate-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 8px; font-size: 15px; color: var(--fg-bright); }
-.gate-head .logo { color: var(--blue); }
+.gate-head .logo { width: 24px; height: 24px; flex: none; }
 .gate-head .muted { margin-left: auto; }
 /* .input.wide sets width:100%, which out-specifies a single class AND adds to
    the 16px side margins -- the box overflowed the card. Matching the same

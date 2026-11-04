@@ -46,6 +46,11 @@ const HELP = `brainstorm — a context IDE for Claude Code sessions
       Print what entered the model's context, in order, for each API call the
       transcript recorded. --probe lists every frame a string appears in.
 
+  brainstorm setup [--download] [--no-plugin] [--to <folder>]
+      The latest code, the live plugin in Claude Code, and brainstorm.exe
+      built into Desktop\\brainstorm-app. Also: npm run setup, or with no
+      clone, npx github:buggerlogger/brainstorm setup
+
   brainstorm list | extract | status | build | verify ...
       The engine, unchanged. 'brainstorm help' shows its own flags.
 `;
@@ -118,6 +123,11 @@ async function main() {
       console.log('');
     }
     return;
+  }
+
+  if (cmd === 'setup') {
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'setup.mjs'), ...argv.slice(1)], { stdio: 'inherit' });
+    process.exit(r.status ?? 1);
   }
 
   // Everything else is the engine.

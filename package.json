@@ -7,6 +7,17 @@
   "bin": {
     "brainstorm": "bin/brainstorm.mjs"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "ui/",
+    "mod/",
+    "!mod/*/tsconfig.json",
+    "!mod/*/.claude-plugin/types/",
+    "scripts/",
+    "assets/brainstorm.ico",
+    "NOTICE"
+  ],
   "engines": {
     "node": ">=22"
   },
@@ -15,6 +26,7 @@
     "ide": "node bin/brainstorm.mjs ide",
     "flow": "node bin/brainstorm.mjs flow",
     "build:exe": "node scripts/build-exe.mjs",
+    "setup": "node scripts/setup.mjs",
     "test": "node test/run.mjs",
     "test:all": "node test/run.mjs --all",
     "test:exe": "node test/run.mjs --exe"
