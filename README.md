@@ -76,8 +76,9 @@ next brainstorm you open. Turn it off with **Live hooks** in Settings.
 
 ## Editing from the debugger, and the main context
 
-Every frame of every call in the debugger and the Recording view has a **✎**:
-it opens the block that frame came from, by its transcript line. A frame
+Recording is the debugger (the separate debugger view is gone). Every block of
+every call in it has a **✎**: it opens the block that frame came from, by its
+transcript line. A frame
 rebuilt from the request records is matched to its message by kind and exact
 text; when that text is in several messages the pen is off rather than
 guessing. A call recorded after the session was opened has no block yet, so
@@ -95,6 +96,39 @@ and after every rewind, so a rewind cannot delete it. A compaction can: Claude
 rewrites the conversation into a summary, so once the session has compacted
 since you saved it, the main context is paused instead of re-inserted word for
 word. Saving it again pins it again.
+
+## What build will not write
+
+Measured against the real API, on a compacted session whose summary was
+cleared -- exactly what broke a real session:
+
+| the summary block | the API |
+|---|---|
+| emptied | `400 messages.0: user messages must have non-empty content` |
+| left as whitespace | `400 text content blocks must contain non-whitespace text` |
+| dropped | accepted, and the fact it held was gone |
+
+So **clearing a block drops it**, a dropped tool call takes its result with it,
+an empty message already in a session is repaired (removed, the chain
+re-linked) on the next build, and `verify` refuses one written by hand. The
+build prints each of these. Opening a session an earlier build left broken and
+doing Save & Resume heals it.
+
+**Not sent.** A rewind leaves the branch it left in the file, and a compaction
+leaves everything before its boundary; claude never sends either again. Those
+blocks are filed under *Not sent (rewound or compacted away)*, shown dim, and
+left out of the context size: editing them changes nothing. On one real
+session that was 37 of 360 blocks.
+
+**Memory files are not the context.** Claude Code can save a fact to the
+project's memory folder. Editing the conversation does not change that file,
+and claude will notice the two disagree -- measured: it answered that "the
+saved memory file now says" the old value.
+
+`test/real-flow.test.mjs` runs the whole loop with a real claude in a new
+folder, twice: a small task, the fact edited and a message cleared, Save &
+Resume, claude asked without tools (it answers with the edit), a new task, then
+a tool call dropped and a main context set, and claude asked again.
 
 ## Right-click
 

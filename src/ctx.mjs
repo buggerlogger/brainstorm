@@ -435,6 +435,37 @@ function blocksOf(entries) {
   return blocks;
 }
 
+// The conversation claude actually resumes: from the newest message record,
+// back along parentUuid. A rewind leaves the branch it left in the file, and
+// a compaction leaves everything before its boundary; neither is sent again.
+// MEASURED on a real session: 37 of 360 blocks were on no such path, so
+// editing or deleting them changed nothing claude sends.
+function activeChainUuids(entries) {
+  const byUuid = new Map();
+  let leaf = null;
+  for (const e of entries) {
+    const o = e.obj;
+    if (!o?.uuid) continue;
+    byUuid.set(o.uuid, o);
+    if (o.message && (o.type === 'user' || o.type === 'assistant') && !o.isSidechain) leaf = o;
+  }
+  const on = new Set();
+  for (let o = leaf; o && !on.has(o.uuid); o = o.parentUuid ? byUuid.get(o.parentUuid) : null) on.add(o.uuid);
+  return on;
+}
+
+// What the API refuses as message content. MEASURED, on a compacted session
+// whose summary was cleared: an empty string is "400 messages.0: user
+// messages must have non-empty content", and whitespace is "400 text content
+// blocks must contain non-whitespace text". Dropping the block instead was
+// accepted, and the fact it held was gone.
+const isBlank = (v) => typeof v === 'string' && !v.trim();
+function blankContent(c) {
+  if (typeof c === 'string') return isBlank(c);
+  if (Array.isArray(c)) return c.length === 0 || c.every((p) => p && p.type === 'text' && isBlank(p.text ?? ''));
+  return false;
+}
+
 // syncMirrors applies one edit everywhere the ORIGINAL text also appears
 // outside the message chain.
 //
@@ -661,6 +692,7 @@ function writeEditDir(dir, config, blocks) {
     meta.at = pathToString(b.path);
     if (b.toolName) meta.tool = b.toolName;
     if (b.json) meta.json = true;
+    if (b.sent === false) meta.sent = false;
     out.push(`<!-- @B ${JSON.stringify(meta)} -->`);
     out.push(b.text);
     out.push(SEP);
@@ -750,6 +782,8 @@ function cmdExtract() {
   const last = chainEntries[chainEntries.length - 1].obj;
   const cal = calibrate(entries);
   const blocks = blocksOf(entries);
+  const onChain = activeChainUuids(entries);
+  for (const b of blocks) if (!onChain.has(b.uuid)) b.sent = false;
 
   // A compaction boundary is a `summary`/`system` record that actually exists;
   // sessions often have none, and inventing one injects a summary that was
@@ -889,6 +923,27 @@ function cmdBuild() {
   const renames = collectRenames();
   const syncOff = has('no-sync-mirrors');
 
+  // Clearing a block IS dropping it: an empty message is refused by the API
+  // and dropping is what a person who cleared it meant (both measured). A
+  // tool result can be empty, so it is left as written.
+  const emptiedIds = [];
+  const emptied = (ob, eb) => eb.keep !== false && eb.text !== ob.text && isBlank(eb.text) && ob.kind !== 'tool_result';
+  // A dropped tool call takes its result with it: a result without its call
+  // is refused (verify, and measured), and the pair is what "drop this call"
+  // means.
+  const droppedCalls = new Set();
+  for (const ob of original) {
+    const eb = byId.get(ob.id);
+    if (eb && ob.kind === 'tool_use' && ob.toolId && (eb.keep === false || emptied(ob, eb))) droppedCalls.add(ob.toolId);
+  }
+  const forced = new Map();
+  for (const ob of original) {
+    const eb = byId.get(ob.id);
+    if (eb && ob.kind === 'tool_result' && droppedCalls.has(ob.toolId) && eb.keep !== false) forced.set(eb.id, ob.toolId);
+  }
+  let blankMessages = 0;
+  let blankParts = 0;
+
   // Group the edits by source line so each record is rewritten once.
   const perLine = new Map();
   for (const ob of original) {
@@ -910,7 +965,9 @@ function cmdBuild() {
     let anyKept = edits.length === 0;
     const dropPaths = [];
     for (const { ob, eb } of edits) {
-      if (eb.keep === false) {
+      const cleared = emptied(ob, eb);
+      if (cleared) emptiedIds.push(eb.id);
+      if (eb.keep === false || cleared || forced.has(eb.id)) {
         dropPaths.push(ob.path);
         droppedParts++;
         continue;
@@ -965,6 +1022,21 @@ function cmdBuild() {
         droppedLines.add(e.lineNo);
         continue;
       }
+    }
+
+    // Repair what the API refuses, whoever wrote it: a blank text part inside a
+    // message is removed, and a message left with nothing is dropped (the
+    // chain is re-linked below). This also heals a session that an earlier
+    // build left with an empty message.
+    if (o.message && Array.isArray(o.message.content)) {
+      const before = o.message.content.length;
+      o.message.content = o.message.content.filter((p) => !(p && p.type === 'text' && isBlank(p.text ?? '')));
+      blankParts += before - o.message.content.length;
+    }
+    if (o.uuid && o.message && (o.type === 'user' || o.type === 'assistant') && blankContent(o.message.content)) {
+      droppedLines.add(e.lineNo);
+      blankMessages++;
+      continue;
     }
 
     o.sessionId = newId;
@@ -1060,6 +1132,9 @@ function cmdBuild() {
   console.log(`  tool mirrors    ${toolMirrored}`);
   if (renames.length) console.log(`  renames applied ${renamed} (${renames.map(([a, b]) => `${a}->${b}`).join(', ')})`);
   console.log(`  records dropped ${droppedLines.size}`);
+  console.log(`  emptied         ${emptiedIds.length}${emptiedIds.length ? ` -> dropped (#${emptiedIds.join(', #')}): an empty message is refused by the API` : ''}`);
+  console.log(`  paired drops    ${forced.size}${forced.size ? ` tool result(s) dropped with their call (#${[...forced.keys()].join(', #')})` : ''}`);
+  console.log(`  blank repaired  ${blankMessages} message(s), ${blankParts} text part(s)`);
   console.log(`  chain repaired  ${repaired} parentUuid link(s)`);
   console.log(`  new session id  ${newId}`);
   console.log(`  -> ${outFile} (${finalLines.length} lines)`);
@@ -1165,6 +1240,15 @@ function verifyFile(file, silent = false) {
     if (!uuids.has(o.parentUuid)) problems.push(`L${n}: parentUuid ${o.parentUuid} is not in the file — the chain is broken`);
   }
   if (!roots) problems.push('no chain root — nothing to resume from');
+
+  // Blank content: what the API refuses (measured). build repairs it, so on
+  // a built file this only fires for a hand edit -- before it reaches claude.
+  for (const { n, o } of objs) {
+    if (!o.uuid || !o.message || (o.type !== 'user' && o.type !== 'assistant')) continue;
+    const c = o.message.content;
+    if (blankContent(c)) problems.push(`L${n}: ${o.type} message has empty content -- the API refuses it ("user messages must have non-empty content")`);
+    else if (Array.isArray(c) && c.some((x) => x && x.type === 'text' && isBlank(x.text ?? ''))) problems.push(`L${n}: a text part is blank -- the API refuses it ("text content blocks must contain non-whitespace text")`);
+  }
 
   const toolUses = new Set();
   const results = new Set();

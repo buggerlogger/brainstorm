@@ -194,7 +194,13 @@
       });
       head.dataset.recStep = String(s.id);
       frag.appendChild(head);
-      if (s.prompt) frag.appendChild(node({ depth: 1, label: `“${s.prompt}”`, cls: 'muted' }));
+      if (s.prompt) {
+        const pn = node({ depth: 1, label: `“${s.prompt}”`, cls: 'muted' });
+        // the prompt is a block too: its pen opens the message it came from
+        const pf = (R.byStep.get(s.id) || []).find((f) => f.io === 'in' && f.kind === 'text' && f.role === 'user');
+        if (pf) addPen(pn, { line: pf.line, kind: pf.kind });
+        frag.appendChild(pn);
+      }
       if (!isOpen) continue;
       for (const f of R.byStep.get(s.id) || []) {
         const n = node({
@@ -221,7 +227,7 @@
         meta: `${R.pending.length} waiting`,
       }));
       R.pending.forEach((w) => {
-        frag.appendChild(node({
+        frag.appendChild(addPen(node({
           depth: 2, icon: '→', iconCls: w.kind === 'tool_result' ? 'tool_result' : w.role,
           label: `${w.kind} — ${w.detail || ''}`,
           cls: 'muted',
@@ -237,7 +243,7 @@
             renderTabs();
             renderEditor();
           },
-        }));
+        }), { line: w.line, kind: w.kind }));
       });
     }
     box.replaceChildren(frag);

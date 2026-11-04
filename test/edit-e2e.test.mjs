@@ -126,7 +126,10 @@ try {
   await ev(`trace('source', { quiet: true }).then(() => true)`);
   const pick = await ev(`(() => { const calls = (S.trace || {}).calls || []; for (let ci = 0; ci < calls.length; ci++) { const fi = calls[ci].frames.findIndex((f) => f.kind === 'message' && f.blockLine); const off = calls[ci].frames.findIndex((f) => !f.blockLine); if (fi >= 0) return { ci, fi, off, line: calls[ci].frames[fi].blockLine, srcLine: calls[ci].frames[fi].source && calls[ci].frames[fi].source.line }; } return null; })()`);
   check(!!pick, 'the debugger has a call with a message frame that has a block', JSON.stringify(pick));
-  await ev(`document.querySelector('.act[data-view="debug"]').click(); S.expanded.add('c:${pick.ci}'); renderFlowTree(); true`);
+  // the debugger view is gone (Recording is the debugger); its tree still renders the flow
+  check(await ev(`!document.querySelector('.act[data-view="debug"]')`), 'the Context debugger tab is gone');
+  check(!(await ev(`document.querySelector('#tree').textContent`)).includes('Sessions'), 'the Explorer lists no other sessions');
+  await ev(`S.expanded.add('c:${pick.ci}'); renderFlowTree(); true`);
   const pens = await ev(`[...document.querySelectorAll('#flow-tree .node .pen')].length`);
   const offs = await ev(`[...document.querySelectorAll('#flow-tree .node .pen.off')].length`);
   check(pens > 0, 'every frame row has a pen', `${pens} pen(s), ${offs} off (system prompt, tool list, request-only text: no block)`);
@@ -191,6 +194,8 @@ try {
   for (let i = startAt; i < lines.length; i += 40) { appendFileSync(live, `${lines.slice(i, i + 40).join('\n')}\n`); await sleep(60); }
   const frame = await until(`(() => { const R = brainstorm.recording(); for (const fs of R.byStep.values()) for (const f of fs) if (f.line > ${lastLine} && document.querySelector('#rec-list [data-rec-seq="' + f.seq + '"] .pen')) return { seq: f.seq, line: f.line, kind: f.kind }; return null; })()`, 20000);
   check(!!frame, 'a recorded frame newer than the opened blocks, with a pen', JSON.stringify(frame));
+  const vis = await ev(`(() => { const pen = document.querySelector('#rec-list [data-rec-seq="${frame.seq}"] .pen'); const pr = pen.getBoundingClientRect(); const tr = document.querySelector('#rec-list').getBoundingClientRect(); return { inside: pr.width > 0 && pr.right <= tr.right + 1 && pr.left >= tr.left, opacity: Number(getComputedStyle(pen).opacity) }; })()`);
+  check(vis.inside && vis.opacity >= 0.85, 'and the pen is visible: inside the panel, not faint', JSON.stringify(vis));
   await ev(`document.querySelector('#rec-list [data-rec-seq="${frame.seq}"] .pen').click(); true`);
   check(!!(await until(`!document.querySelector('#confirmbar').hidden`)), 'it asks before refreshing', await ev(`document.querySelector('#confirm-text').textContent.slice(0, 90)`));
   await ev(`document.querySelector('#confirm-yes').click(); true`);
@@ -239,7 +244,10 @@ try {
   check(await ev(`document.querySelector('#live').classList.contains('folded')`), 'its header folds it');
   await ev(`document.querySelector('#live .live-head').click(); true`);
   check(await ev(`!document.querySelector('#live').classList.contains('folded')`), 'and unfolds it');
-  await drag('#split-live', 0, 60);
+  const h0 = await ev(`Math.round(document.querySelector('#live').getBoundingClientRect().height)`);
+  await drag('#split-live', 0, 120);
+  const h1 = await ev(`Math.round(document.querySelector('#live').getBoundingClientRect().height)`);
+  check(h1 - h0 >= 80, 'dragging its handle DOWN makes it taller (it used to snap back)', `${h0} -> ${h1} px`);
   const lh = await ev(`document.querySelector('#live').style.getPropertyValue('--live-h')`);
   check(/^\d+px$/.test(lh), 'its handle sets its height', lh);
 

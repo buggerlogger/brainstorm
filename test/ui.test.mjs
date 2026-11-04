@@ -74,10 +74,13 @@ check(
   'every activity-bar button has a matching view section',
   actViews.filter((v) => !allSections.includes(v)).join(', '),
 );
+// a section marked data-internal has no tab on purpose (the debugger: kept for
+// the controls search, probe and the Flow panel use)
+const internal = matchAll(/data-view="([^"]+)"\s+data-internal/g, html);
 check(
-  allSections.every((v) => actViews.includes(v)),
-  'every view section has an activity-bar button',
-  allSections.filter((v) => !actViews.includes(v)).join(', '),
+  allSections.every((v) => actViews.includes(v) || internal.includes(v)),
+  'every view section has an activity-bar button (or is marked data-internal)',
+  allSections.filter((v) => !actViews.includes(v) && !internal.includes(v)).join(', '),
 );
 
 const ptabs = matchAll(/class="ptab[^"]*"\s+data-panel="([^"]+)"/g, html);

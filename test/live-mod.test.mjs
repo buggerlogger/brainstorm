@@ -87,13 +87,15 @@ try {
     check(first.messageCount > 0 && typeof first.model === 'string', 'the first request: what was sent', `${first.model} · ${first.messageCount} messages · effort ${first.effort}`);
     check(first.sentAt >= t0 && first.firstAt > first.sentAt && first.stopAt >= first.firstAt,
       'and when: sent, first chunk, stop', `waited ${first.firstAt - first.sentAt} ms for the first chunk`);
-    check(first.stopReason === 'tool_use' && first.tools.some((t) => t.name === 'Read'), 'it stopped to call Read', `${first.stopReason}: ${first.tools.map((t) => t.name).join(', ')}`);
+    // the model picks the tool (Read one run, Bash cat the next): the test is that
+    // it called ONE, not which
+    check(first.stopReason === 'tool_use' && first.tools.length > 0, 'it stopped to call a tool', `${first.stopReason}: ${first.tools.map((t) => t.name).join(', ')}`);
     const u = first.usage || {};
     check(Number.isFinite(u.cache_read_input_tokens) && Number.isFinite(u.cache_creation_input_tokens) && Number.isFinite(u.output_tokens),
       'with the usage the API reported', `cache read ${u.cache_read_input_tokens} · written ${u.cache_creation_input_tokens} · new ${u.input_tokens} · out ${u.output_tokens}`);
   }
-  const read = live.tools.find((t) => t.tool === 'Read');
-  check(!!read && String(read.input?.file_path || '').endsWith('note.txt'), 'the Read call, with the file it was given', read ? read.input.file_path : 'none');
+  const read = live.tools.find((t) => JSON.stringify(t.input || {}).includes('note.txt'));
+  check(!!read, 'the tool call that read note.txt, with what it was given', read ? `${read.tool} ${JSON.stringify(read.input).slice(0, 90)}` : 'none');
   if (read) {
     check(read.doneAt !== null && read.doneAt >= read.startAt && String(read.text || '').includes('21 37 49'), 'and what came back to the model', `${(read.text || '').length} chars in ${read.doneAt - read.startAt} ms`);
     check(first && first.tools.some((t) => t.id === read.id), 'the call and the request that chose it share one tool_use_id', read.id);

@@ -58,10 +58,11 @@
     const max = Math.max(120, view.clientHeight - 140);
     const v = Math.max(80, Math.min(max, Math.round(px)));
     box.style.setProperty('--live-h', `${v}px`);
+    box.classList.add('sized');
     store.set('brainstorm.liveh', String(v));
   }
   const savedH = Number(store.get('brainstorm.liveh'));
-  if (savedH) $('#live').style.setProperty('--live-h', `${savedH}px`);
+  if (savedH) { $('#live').style.setProperty('--live-h', `${savedH}px`); $('#live').classList.add('sized'); }
   {
     const h = $('#split-live');
     h.addEventListener('pointerdown', (e) => {
@@ -79,7 +80,7 @@
       h.addEventListener('pointermove', move);
       h.addEventListener('pointerup', up);
     });
-    h.addEventListener('dblclick', () => { $('#live').style.removeProperty('--live-h'); store.set('brainstorm.liveh', ''); });
+    h.addEventListener('dblclick', () => { $('#live').style.removeProperty('--live-h'); $('#live').classList.remove('sized'); store.set('brainstorm.liveh', ''); });
   }
 
   const secs = (ms) => `${Math.max(0, ms / 1000).toFixed(1)} s`;

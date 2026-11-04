@@ -35,7 +35,6 @@
   <nav class="activity" role="tablist" aria-label="Views">
     <button class="act selected" data-view="explorer" title="Explorer">☰</button>
     <button class="act" data-view="recording" title="Recording — live calls as claude makes them">⏺</button>
-    <button class="act" data-view="debug" title="Context debugger">▷</button>
     <button class="act" data-view="probe" title="Find in context">⌕</button>
     <button class="act" data-view="pins" title="Pinned context — survives rewind">⊕</button>
     <button class="act" data-view="agents" title="Agents — who read what">◎</button>
@@ -54,7 +53,9 @@
     </section>
 
     <!-- DEBUGGER -->
-    <section class="view" data-view="debug" hidden>
+    <!-- No tab of its own any more: Recording is the debugger. Kept, hidden,
+         because search, probe and the Flow panel use its controls and tree. -->
+    <section class="view" data-view="debug" data-internal hidden>
       <div class="view-head">Context debugger</div>
       <div class="pad row">
         <select id="flow-of" class="input">
@@ -179,7 +180,7 @@
     <div class="tabs" id="tabs"></div>
     <div class="editor-wrap">
       <div class="editor-meta">
-        <span id="editor-meta">Open a block from the Explorer, or a frame from the debugger.</span>
+        <span id="editor-meta">Open a block from the Explorer, or a call in Recording (its ✎ opens the block).</span>
         <label class="check small" style="float:right"><input type="checkbox" id="opt-wrap"> wrap</label>
       </div>
       <div class="editor-body">
@@ -253,7 +254,7 @@
   </div>
 
   <div class="panel-body" data-panel="flow" hidden>
-    <div class="flow-detail" id="flow-detail"><div class="muted pad">Trace a session in the debugger view.</div></div>
+    <div class="flow-detail" id="flow-detail"><div class="muted pad">An agent's flow opens here: pick one in the Agents view. F10 steps through it.</div></div>
   </div>
 
   <div class="panel-body" data-panel="strings" hidden>

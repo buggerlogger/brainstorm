@@ -153,36 +153,16 @@ function renderTree() {
           icon: glyph(b.kind, b.role), iconCls: b.kind === 'text' ? b.role : b.kind,
           label: `#${b.id} ${b.title}`,
           meta: fmt(b.chars),
-          cls: `${b.keep ? '' : 'dropped'} ${b.dirty ? 'dirty' : ''} ${S.active === `block:${b.id}` ? 'selected' : ''}`,
+          cls: `${b.keep ? '' : 'dropped'} ${b.sent === false ? 'notsent' : ''} ${b.dirty ? 'dirty' : ''} ${S.active === `block:${b.id}` ? 'selected' : ''}`,
           onClick: () => openBlock(b.id),
           onAux: () => toggleKeep(b.id, !b.keep),
           data: { blockId: b.id, folder: g.name },
         }));
       }
     }
-    frag.appendChild(el('div', 'view-head', 'Sessions'));
-  }
-
-  for (const p of S.projects) {
-    const key = `p:${p.dir}`;
-    const open = S.expanded.has(key);
-    frag.appendChild(node({
-      depth: 0, twisty: open ? '▾' : '▸', icon: '🗀',
-      label: p.cwd ? p.cwd.split(/[\\/]/).pop() || p.dir : p.dir,
-      meta: `${p.sessions.length}`,
-      onClick: () => { toggle(key); renderTree(); },
-    }));
-    if (!open) continue;
-    for (const s of p.sessions) {
-      frag.appendChild(node({
-        depth: 1, icon: '▤',
-        label: `${s.id.slice(0, 8)} ${s.firstPrompt ? `— ${s.firstPrompt.slice(0, 40)}` : ''}`,
-        meta: `${fmt(s.bytes)}B`,
-        cls: S.state?.config?.sessionId === s.id ? 'selected' : '',
-        onClick: () => openSession(s.id, s.path),
-        data: { sessionId: s.id, sessionPath: s.path },
-      }));
-    }
+  } else {
+    // other sessions are opened from the start gate, not listed here
+    frag.appendChild(el('div', 'muted pad small', 'No session open. Open… (Ctrl+O) picks one.'));
   }
   tree.replaceChildren(frag);
 }
@@ -230,7 +210,7 @@ async function openBlock(id) {
     tab = {
       key, kind: 'block', id, label: `#${id} ${b.kind}`,
       text: b.text, readonly: false, dirty: !!b.dirty,
-      meta: `${b.role} · ${b.kind} · line ${b.line} · ${b.at}${b.tool ? ` · ${b.tool}` : ''}`,
+      meta: `${b.sent === false ? 'NOT SENT: this block is on a branch claude no longer sends (rewound, or before the last compaction), so editing it changes nothing · ' : ''}${b.role} · ${b.kind} · line ${b.line} · ${b.at}${b.tool ? ` · ${b.tool}` : ''}`,
     };
     S.tabs.push(tab);
   }
@@ -265,7 +245,7 @@ function renderEditor() {
   if (!t) {
     ed.value = '';
     ed.readOnly = true;
-    $('#editor-meta').textContent = 'Open a block from the Explorer, or a frame from the debugger.';
+    $('#editor-meta').textContent = 'Open a block from the Explorer, or a call in Recording (its ✎ opens the block).';
     $('#gutter').textContent = '';
     return;
   }
@@ -327,6 +307,8 @@ async function pushBlock(t) {
   if (t.kind !== 'block') return;
   try {
     await api('/api/block', { id: t.id, text: t.text });
+    // MEASURED: an empty message is refused by the API, so build drops it
+    if (!t.text.trim()) status(`block #${t.id} is empty: building drops it (an empty message is refused by the API)`);
     S.state = await api('/api/state');
     renderTree();
     renderStatus();
@@ -708,7 +690,7 @@ function rewindRisk() {
   const out = [];
   for (const g of S.state?.groups || []) {
     for (const b of g.blocks) {
-      if (dirty.has(b.id) && b.keep && b.kind === 'text' && (b.role === 'user' || b.role === 'assistant')) out.push(b);
+      if (dirty.has(b.id) && b.keep && b.sent !== false && b.kind === 'text' && (b.role === 'user' || b.role === 'assistant')) out.push(b);
     }
   }
   return out;

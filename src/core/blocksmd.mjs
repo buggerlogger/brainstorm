@@ -102,7 +102,13 @@ const CONTENT_CLASSES = [
   },
 ];
 
+// A block on no path claude resumes -- a branch a rewind left, or anything
+// before the last compaction. It is shown, apart, because editing it changes
+// nothing claude sends (MEASURED: 37 of 360 blocks on one real session).
+export const NOT_SENT = 'Not sent (rewound or compacted away)';
+
 export function classifyBlock(b) {
+  if (b.sent === false) return NOT_SENT;
   const t = (b.text || '').trim();
   if (b.kind === 'text' || b.kind === undefined) {
     for (const c of CONTENT_CLASSES) {
@@ -134,6 +140,7 @@ const ORDER = [
   'Tool results',
   'Thinking',
   'Other',
+  NOT_SENT,
 ];
 
 export function groupBlocks(blocks) {

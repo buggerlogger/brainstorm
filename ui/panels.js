@@ -183,8 +183,11 @@
     const value = a.id === 'main' ? 'source' : `agent:${a.id}`;
     if (a.id !== 'main') ensureFlowOption(value, `↳ ${a.label.slice(0, 40)}`);
     $('#flow-of').value = value;
-    selectView('debug');
+    // the debugger view is gone (Recording is the debugger): the flow opens in
+    // the Flow panel at its first frame, and F10 / F5 step through it
     await trace(value);
+    if (S.trace?.calls?.length) jumpTo(0, 0);
+    selectPanel('flow');
     status(`${a.id === 'main' ? 'main agent' : a.label}: ${S.trace?.calls.length ?? 0} call(s)`);
   }
 

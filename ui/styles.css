@@ -161,7 +161,8 @@ body {
 .node.selected { background: var(--bg-select); }
 .node .tw { width: 12px; color: var(--fg-dim); flex: none; text-align: center; }
 .node .ico { width: 14px; flex: none; text-align: center; font-size: 11px; }
-.node .lbl { overflow: hidden; text-overflow: ellipsis; }
+/* min-width 0: a long label shrinks, so the size and the pen always fit */
+.node .lbl { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 .node .meta { margin-left: auto; color: var(--fg-dim); font-size: 10px; flex: none; padding-left: 8px; }
 .node.d1 { padding-left: 20px; }
 .node.d2 { padding-left: 34px; }
@@ -170,11 +171,17 @@ body {
 .node.dirty .lbl::after { content: " ●"; color: var(--yellow); }
 .node .eye { opacity: 0; color: var(--fg-dim); }
 /* the pen: edit the block a frame came from */
-.node .pen { flex: none; margin-left: 6px; padding: 0 3px; color: var(--fg-dim); opacity: .6; cursor: pointer; border-radius: 3px; }
+/* plainly visible, on a selected row too (it was faint grey at 60%) */
+.node .pen { flex: none; margin-left: 6px; padding: 0 3px; color: var(--fg); opacity: .9; cursor: pointer; border-radius: 3px; }
+.node.selected .pen { color: var(--fg-bright); }
 .node .pen:hover { opacity: 1; color: var(--yellow); background: var(--bg-hover); }
 .node .pen.off { opacity: .2; cursor: default; }
 .node .pen.off:hover { color: var(--fg-dim); background: none; }
 .ico.pin { color: var(--yellow); }
+.node.notsent .lbl { opacity: .5; font-style: italic; }
+/* a size the person dragged to is a height, not only a limit: a limit never
+   made the panel taller than its content, so dragging down snapped back */
+.live.sized { height: var(--live-h); max-height: none; }
 .node:hover .eye, .node.dropped .eye { opacity: 1; }
 .ico.user { color: var(--blue); }
 .ico.assistant { color: var(--green); }

@@ -288,7 +288,8 @@ function flushBlocks() {
 function stateView() {
   if (!ws.dir) return { open: false };
   const groups = groupBlocks(ws.blocks);
-  const chars = ws.blocks.reduce((a, b) => (b.keep === false ? a : a + b.text.length), 0);
+  // what claude is sent: not a dropped block, and not one on no path it resumes
+  const chars = ws.blocks.reduce((a, b) => (b.keep === false || b.sent === false ? a : a + b.text.length), 0);
   const ratio = ws.config.tokens?.charsPerToken || 4;
   return {
     open: true,
@@ -302,6 +303,7 @@ function stateView() {
       blocks: ws.blocks.length,
       kept: ws.blocks.filter((b) => b.keep !== false).length,
       dropped: ws.blocks.filter((b) => b.keep === false).length,
+      notSent: ws.blocks.filter((b) => b.sent === false).length,
       chars,
       tokens: Math.round(chars / ratio),
       dirty: [...ws.dirty],
@@ -325,6 +327,7 @@ function stateView() {
         tool: b.tool || null,
         at: b.at,
         keep: b.keep !== false,
+        sent: b.sent !== false,
         chars: b.text.length,
         tokens: Math.round(b.text.length / ratio),
         title: titleOf(b),

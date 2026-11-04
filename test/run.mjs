@@ -129,6 +129,7 @@ run("recorder: double start + overlapping ticks", "recorder-concurrency.test.mjs
 // live hooks: the feed, live.json, adopting a terminal -- its own server, no claude
 run("live hooks: feed, live.json, adopting a terminal", "live.test.mjs");
 run("main context: survives a rewind, paused by a compaction", "pins.test.mjs");
+run("build rules: never an empty message; a dropped call takes its result", "build-rules.test.mjs");
 
 // 3. everything that needs a server
 if (ALL) {
@@ -150,6 +151,7 @@ if (ALL) {
   run('live hooks inside a real claude (brainstorm-live mod)', 'live-mod.test.mjs');
   run('the REAL claude in the session window', 'real-claude-window.test.mjs');
   run('skill swap (two real claude sessions)', 'skillswap.test.mjs');
+  run('the whole loop with a real claude: edit, Save & Resume, ask, task, twice', 'real-flow.test.mjs');
 }
 
 // 4. the packaged exe
