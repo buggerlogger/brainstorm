@@ -146,8 +146,9 @@
     $('#gate-loading').hidden = false;
   }
 
-  async function openPath(path, withConsole) {
-    if (opening) return;
+  // -> 'opened' | 'empty' (no message in it yet, when the caller waits on that) | 'error' | 'busy'
+  async function openPath(path, withConsole, { emptyIsWait = false } = {}) {
+    if (opening) return 'busy';
     opening = true;
     const short = (String(path).match(/([0-9a-f]{8})-[0-9a-f-]{27}\.jsonl$/i) || [])[1] || '';
     busy(`Loading session ${short}`.trim(), 'extracting the transcript into blocks…');
@@ -185,10 +186,14 @@
         status(`opened ${st.config.sessionId.slice(0, 8)} · ${st.totals.blocks} blocks`);
       }
       hide();
+      return 'opened';
     } catch (err) {
+      // claude has created the file but not written a message into it yet
+      if (emptyIsWait && /no conversation records/.test(err.message)) { status('waiting for the first message…'); return 'empty'; }
       $('#gate-count').textContent = '';
       $('#gate-list').prepend(el('div', 'gate-empty', `could not open: ${err.message}`));
       status(err.message, 'err');
+      return 'error';
     } finally {
       opening = false;
       busy(null);
@@ -305,13 +310,27 @@
     const tick = () => { $('#gate-new-time').textContent = `waiting ${Math.round((Date.now() - t0) / 1000)} s · session ${r.sessionId.slice(0, 8)}`; };
     tick();
     w.tick = setInterval(tick, 1000);
+    // ⛔ claude creates the file BEFORE your first message is in it. Opening it
+    // then failed ("no conversation records") and the gate had already stopped
+    // waiting -- MEASURED replaying a real transcript on its own timeline. So
+    // the file appearing is not enough: wait until it holds a message.
     w.timer = setInterval(async () => {
+      if (w.busy) return;
       let f;
       try { f = await api(`/api/find-sessions?q=${encodeURIComponent(w.sessionId)}&limit=5`); } catch { return; }
       const hit = (f.results || []).find((x) => x.id === w.sessionId);
       if (!hit || newWait !== w) return;
-      closeNew();
-      await openPath(hit.path, true);
+      const firstMsg = () => { $('#gate-new-msg').textContent = 'claude has started the session. Type your first message in its terminal: the session opens here as soon as claude saves it.'; };
+      // the list reads only the first 64 KB of a file: one bigger than that may
+      // hold its message further on, so it is TRIED -- and a refusal for having
+      // no message yet means keep waiting, never stop (MEASURED: a real session
+      // with its first message at byte 157,681)
+      if (!hit.hasMessage && hit.bytes <= 65536) { firstMsg(); return; }
+      w.busy = true;
+      const how = await openPath(hit.path, true, { emptyIsWait: true });
+      w.busy = false;
+      if (how === 'empty') { firstMsg(); return; }
+      if (how !== 'opened') closeNew();   // an error: openPath shows it in the list
     }, 1500);
   }
 

@@ -36,7 +36,13 @@ function headOf(file, bytes = 65536) {
 
 function metaOf(file) {
   const head = headOf(file);
-  const out = { cwd: null, gitBranch: null, version: null, firstPrompt: null };
+  // hasMessage: claude creates the file BEFORE the first message is in it
+  // (mode, permission-mode, system, file-history-snapshot come first), and a
+  // file with no message yet cannot be opened -- MEASURED: Create session
+  // opened it in that window and extract refused it ("no conversation
+  // records"). firstPrompt alone is not the test: a first message with no
+  // text (an image) has none.
+  const out = { cwd: null, gitBranch: null, version: null, firstPrompt: null, hasMessage: false };
   for (const line of head.split('\n')) {
     if (!line.trim()) continue;
     let o;
@@ -44,6 +50,7 @@ function metaOf(file) {
     if (!out.cwd && o.cwd) out.cwd = o.cwd;
     if (!out.gitBranch && o.gitBranch) out.gitBranch = o.gitBranch;
     if (!out.version && o.version) out.version = o.version;
+    if ((o.type === 'user' || o.type === 'assistant') && o.message) out.hasMessage = true;
     if (!out.firstPrompt && o.type === 'user' && typeof o.message?.content === 'string') {
       out.firstPrompt = o.message.content.slice(0, 160);
     }

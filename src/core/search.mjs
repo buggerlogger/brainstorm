@@ -40,6 +40,7 @@ export function findSessions(query, { limit = 60 } = {}) {
         bytes: s.bytes,
         mtime: s.mtime,
         firstPrompt: s.firstPrompt || '',
+        hasMessage: !!s.hasMessage,
         why,
       });
     }

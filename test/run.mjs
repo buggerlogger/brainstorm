@@ -153,6 +153,7 @@ if (ALL) {
   run('session window switches in place', 'window.test.mjs');
   run('editing from the debugger, the rewind warning, resizable panes', 'edit-e2e.test.mjs');
   run('the guide while claude is still working (auto-jump on)', 'guide-e2e.test.mjs');
+  run('Create session: waits for the first message, then opens it', 'create-session-e2e.test.mjs');
   run('live hooks inside a real claude (brainstorm-live mod)', 'live-mod.test.mjs');
   run('the REAL claude in the session window', 'real-claude-window.test.mjs');
   run('skill swap (two real claude sessions)', 'skillswap.test.mjs');
