@@ -189,7 +189,12 @@ try {
   check(await waitFor(cdp, `document.querySelector('#guide-title').textContent === 'Pick the folder'`), 'and the guide moves on by itself');
   await cdp.eval(`[...document.querySelectorAll('#guide-actions button')].find((b)=>b.textContent==='Skip guide').click()`);
   check(await waitFor(cdp, `document.querySelector('#guide').hidden`), 'Skip guide closes it');
-  check(await waitFor(cdp, `fetch('/api/settings').then((r)=>r.json()).then((r)=>r.settings.showGuide === false)`), 'and it will not start by itself again');
+  check(await cdp.eval(`fetch('/api/settings').then((r)=>r.json()).then((r)=>r.settings.showGuide === true)`), 'but it still starts next time (Skip is not "never")');
+  await cdp.eval(`brainstorm.guide.start('first')`);
+  await waitFor(cdp, `document.querySelector('#guide-title').textContent === 'Welcome to brainstorm'`);
+  await cdp.eval(`[...document.querySelectorAll('#guide-actions button')].find((b)=>b.textContent==='Don\\'t show again').click()`);
+  check(await waitFor(cdp, `document.querySelector('#guide').hidden`), 'Don\'t show again closes it');
+  check(await waitFor(cdp, `fetch('/api/settings').then((r)=>r.json()).then((r)=>r.settings.showGuide === false)`), 'and that one turns the start off');
   await cdp.eval(`document.querySelector('#gate-new-cancel').click()`);
 
   step('type in the gate and open a session');

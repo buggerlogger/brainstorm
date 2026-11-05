@@ -84,6 +84,7 @@
   T.first = [
     { title: 'Welcome to brainstorm',
       text: 'brainstorm shows exactly what Claude Code sends to the model, lets you change it, and restarts claude on the changed version.\n\nIn about two minutes you will start a session, tell claude something, change what it remembers, and watch it use the change.',
+      dontShow: true,
       next: 'Start' },
     { title: 'Create a session',
       text: 'Click Create session to start a new claude.\n\nOr work on a session you already have: Use one of my sessions.',
@@ -281,7 +282,8 @@
     return INTERRUPTS.find((x) => x.when()) || null;
   }
 
-  // closes the guide; finish() also stops it starting by itself
+  // closes the guide (it starts again next time); finish() also stops it
+  // starting by itself -- Done on the last card, or Don't show again
   function close() {
     tour = null;
     shownKey = null;
@@ -340,7 +342,11 @@
       if (!x && s.actions) {
         s.actions.forEach(([label, fn], i) => acts.appendChild(button(label, i === 0 ? 'primary' : '', fn)));
       } else {
-        if (tour.name !== 'menu') acts.appendChild(button('Skip guide', 'ghost skip', () => finish()));
+        // Skip only closes it: it starts again next time. MEASURED: a Skip used
+        // to turn it off for good, and the person who wanted it back found it
+        // gone. Off for good is a choice of its own (or finishing the guide).
+        if (tour.name !== 'menu') acts.appendChild(button('Skip guide', 'ghost skip', () => close()));
+        if (!x && s.dontShow) acts.appendChild(button('Don\'t show again', 'ghost', () => finish()));
         if (!x && s.alt) acts.appendChild(button(s.alt[0], '', s.alt[1]));
         // every step has a way on, by hand: nobody is stuck if something is off
         if (!x) acts.appendChild(button(s.next || 'Next', 'primary', advance));
